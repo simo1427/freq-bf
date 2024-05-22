@@ -1,0 +1,17 @@
+{
+  "name" : "fast-bilateral-performance-analysis",
+  "version-string" : "1.0.0",
+  "builtin-baseline" : "a1a1cbc975abf909a6c8985a6a2b8fe20bbd9bd6",
+  "dependencies" : [ {
+    "name" : "opencv",
+    "version>=" : "4.8.0#1",
+    "$comment" : "  # this is heuristically generated, and may not be correct\n\n  find_package(OpenCV CONFIG REQUIRED)\n\n  # note: 10 additional targets are not displayed.\n\n  target_link_libraries(main PRIVATE opencv_ml opencv_dnn opencv_core opencv_flann)\n"
+  }, {
+    "name" : "cli11",
+    "version>=" : "2.3.2",
+    "$comment" : "  # this is heuristically generated, and may not be correct\n\n  find_package(CLI11 CONFIG REQUIRED)\n\n  target_link_libraries(main PRIVATE CLI11::CLI11)\n"
+  }, {
+    "name" : "gsl",
+    "version>=" : "2.7.1#3"
+  } ]
+}
