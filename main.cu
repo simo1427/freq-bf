@@ -56,12 +56,10 @@ int main(int argc, char** argv) {
 
     // CUDA buffers declaration
 
-    // - Buffers for the component images kernels
-    auto dBuffs = (uint8_t**) malloc(numberOfCoefficients * sizeof(uint8_t*));
-
-    for (int i = 0; i < numberOfCoefficients; i++) {
-        checkCudaErrors(cudaMalloc(&dBuffs[i], frameSize * sizeof(uint8_t)));
-    }
+    // - Buffers for the component images GPU kernels
+    // This has to be better thought out - the buffer should be contiguous in memory
+    // to ensure the last kernel can sum all components. This will be handled once
+    // the bilateral filter approximation will be implemented.
 
     uint8_t* dInp;
     checkCudaErrors(cudaMalloc(&dInp, frameSize * sizeof(uint8_t)));
@@ -90,12 +88,8 @@ int main(int argc, char** argv) {
     cv::waitKey(0);
     // Deallocate
 
-    for (int i = 0; i < numberOfCoefficients; i++) {
-        cudaFree(dBuffs[i]);
-    }
     cudaFree(dInp);
     cudaFree(dOut);
-    free(dBuffs);
 
     cv::destroyAllWindows();
     return 0;
