@@ -60,16 +60,16 @@ int main(int argc, char** argv) {
     auto dBuffs = (uint8_t**) malloc(numberOfCoefficients * sizeof(uint8_t*));
 
     for (int i = 0; i < numberOfCoefficients; i++) {
-        checkForErrors(cudaMalloc(&dBuffs[i], frameSize * sizeof(uint8_t)));
+        checkCudaErrors(cudaMalloc(&dBuffs[i], frameSize * sizeof(uint8_t)));
     }
 
     uint8_t* dInp;
-    checkForErrors(cudaMalloc(&dInp, frameSize * sizeof(uint8_t)));
+    checkCudaErrors(cudaMalloc(&dInp, frameSize * sizeof(uint8_t)));
     uint8_t* dOut;
-    checkForErrors(cudaMalloc(&dOut, frameSize * sizeof(uint8_t)));
+    checkCudaErrors(cudaMalloc(&dOut, frameSize * sizeof(uint8_t)));
 
     // Load image into the inp buf
-    checkForErrors(cudaMemcpy(dInp, frame.ptr(), frameSize * sizeof(uint8_t), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dInp, frame.ptr(), frameSize * sizeof(uint8_t), cudaMemcpyHostToDevice));
 
     // Execute kernel
 
@@ -82,10 +82,7 @@ int main(int argc, char** argv) {
 
     // Copy back from GPU
 
-    cudaDeviceSynchronize(); // TODO: do I actually need this?
-
-
-    checkForErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(uint8_t), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(uint8_t), cudaMemcpyDeviceToHost));
 
     cv::imshow("in", frame);
     cv::imshow("out", filterOut);
