@@ -4,7 +4,7 @@ project(cuda_bf CUDA CXX)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(cuda_bf main.cu utils.cu utils.cuh)
+add_executable(cuda_bf main.cu utils.cu utils.cuh filtering.cu filtering.cuh rangeKernels.h rangeKernels.cpp)
 
 set_target_properties(cuda_bf PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
