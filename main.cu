@@ -5,7 +5,7 @@
 #include "utils.cuh"
 #include <CLI/CLI.hpp>
 #include "rangeKernels.h"
-#include "filtering.cuh"
+#include "spatial/separableConvolution.cuh"
 //#include <assert.h>
 
 

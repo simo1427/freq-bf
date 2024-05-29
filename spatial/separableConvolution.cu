@@ -1,4 +1,4 @@
-#include "filtering.cuh"
+#include "separableConvolution.cuh"
 
 #include <math_constants.h>
 #include <stdio.h>
@@ -92,7 +92,7 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, float* d_Krn, int width
 
     sepFilterRows <<<blocksRows, threadsRows>>> (d_Buf, d_Src, d_Krn, width, height, krnSize);
     sepFilterCols <<<blocksCols, threadsCols>>> (d_Out, d_Buf, d_Krn, width, height, krnSize);
-    
+
     // TODO: make use of local memory & cooperative groups
     // TODO: copy convolution kernel to constant memory
 }
