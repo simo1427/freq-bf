@@ -22,12 +22,13 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
-    double sigmaSpatial = 8;
-    int spatialKernelSize = round(sigmaSpatial * 1.5f) * 2 + 1;;
+    double sigmaSpatial = 5;
+    int spatialKernelSize = static_cast<int>(round(sigmaSpatial * 1.5f) * 2 + 1);
     double sigmaRange = 0.35;
     double T = 2;
     int numberOfCoefficients = 10;
     cv::Mat frame = cv::imread(filename, cv::IMREAD_GRAYSCALE);
+    frame.convertTo(frame, CV_32F, 1.0 / 255, 0);
     std::cout << frame.rows << " " << frame.cols << " " << frame.isContinuous() << std::endl;
     if (!frame.isContinuous())
     {
@@ -49,7 +50,8 @@ int main(int argc, char** argv) {
     cv::Mat kernel, kernel2D;
 
     //TODO: use parameters instead of hardcoded ones
-    kernel = cv::getGaussianKernel(33, 8, CV_32F);
+    kernel = cv::getGaussianKernel(spatialKernelSize, sigmaSpatial, CV_32F);
+
 
     std::cout << "Gaussian kernel:\n";
     for (int i = 0; i < kernel.rows; i++) {
@@ -65,8 +67,10 @@ int main(int argc, char** argv) {
     // the bilateral filter approximation will be implemented.
 
 
-    uint8_t* dInp;
-    checkCudaErrors(cudaMalloc(&dInp, frameSize * sizeof(uint8_t)));
+    float* dInp;
+    checkCudaErrors(cudaMalloc(&dInp, frameSize * sizeof(float)));
+    float* dBuf;
+    checkCudaErrors(cudaMalloc(&dBuf, frameSize * sizeof(float)));
     float* dOut;
     checkCudaErrors(cudaMalloc(&dOut, frameSize * sizeof(float)));
 
@@ -74,12 +78,12 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMalloc(&dKrn, kernel.rows * sizeof(float)));
 
     // Load image into the inp buf
-    checkCudaErrors(cudaMemcpy(dInp, frame.ptr(), frameSize * sizeof(uint8_t), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dInp, frame.ptr<float>(), frameSize * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(dKrn, kernel.ptr<float>(), kernel.rows * sizeof(float),  cudaMemcpyHostToDevice));
 
     // Execute kernel
 
-    sepFilter(dOut, dInp, dKrn, w, h, 33);
+    sepFilter(dOut, dInp, dBuf, dKrn, w, h, spatialKernelSize);
 
     // Copy back from GPU
 
@@ -88,11 +92,34 @@ int main(int argc, char** argv) {
     cv::imshow("in", frame);
     cv::imshow("out", filterOut);
     cv::imwrite("./out.tif", filterOut);
+
+    auto dstGold = cv::Mat(frame.rows, frame.cols, CV_32F);
+
+    cv::sepFilter2D(frame, dstGold, CV_32F, kernel, kernel);
+
+    cv::Mat diff = dstGold - filterOut;
+
+    float mse = 0;
+
+    for (int i = 0; i < diff.rows ; i++) {
+        float* errPtr = diff.ptr<float>(i);
+        for (int j = 0; j < diff.cols; j++) {
+            mse += errPtr[j] * errPtr[j];
+        }
+    }
+
+    mse /= ((diff.rows) * (diff.cols));
+
+    std::cout << mse << std::endl;
+    cv::imwrite("./cv.tif", dstGold);
+    cv::imwrite("./diff.tif", diff);
+
     cv::waitKey(0);
     // Deallocate
 
     cudaFree(dInp);
     cudaFree(dOut);
+    cudaFree(dBuf);
 
     cv::destroyAllWindows();
     return 0;
