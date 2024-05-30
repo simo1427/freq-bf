@@ -82,15 +82,13 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMemcpy(dKrn, kernel.ptr<float>(), kernel.rows * sizeof(float),  cudaMemcpyHostToDevice));
 
     // Execute kernel
-
     sepFilter(dOut, dInp, dBuf, dKrn, w, h, spatialKernelSize);
-
     // Copy back from GPU
 
     checkCudaErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cv::imshow("in", frame);
-    cv::imshow("out", filterOut);
+//    cv::imshow("in", frame);
+//    cv::imshow("out", filterOut);
     cv::imwrite("./out.tif", filterOut);
 
     auto dstGold = cv::Mat(frame.rows, frame.cols, CV_32F);
@@ -110,18 +108,23 @@ int main(int argc, char** argv) {
 
     mse /= ((diff.rows) * (diff.cols));
 
-    std::cout << mse << std::endl;
+    std::cout << "PSNR: " << 10 * log10(1 / mse) << " dB\n";
     cv::imwrite("./cv.tif", dstGold);
     cv::imwrite("./diff.tif", diff);
 
-    cv::waitKey(0);
+//    cv::waitKey(0);
     // Deallocate
 
     cudaFree(dInp);
     cudaFree(dOut);
     cudaFree(dBuf);
 
-    cv::destroyAllWindows();
+    frame.release();
+    filterOut.release();
+    kernel.release();
+
+
+//    cv::destroyAllWindows();
     return 0;
 }
 

@@ -1,7 +1,9 @@
 #include "separableConvolution.cuh"
 
 #include <math_constants.h>
-#include <stdio.h>
+#include <stdio.h> // for within CUDA kernels for debugging purposes
+#include <iostream>
+
 #define IMAGE_PATCH_WIDTH 64
 #define IMAGE_PATCH_HEIGHT 16
 #define MAX_HKS 63
@@ -87,11 +89,53 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, float* d_Krn, int width
     dim3 threadsRows(IMAGE_PATCH_HEIGHT, IMAGE_PATCH_WIDTH);
     dim3 blocksRows(height / threadsRows.x + (height % threadsRows.x ? 1 : 0), width / threadsRows.y + (width % threadsRows.y ? 1 : 0));
 
-    dim3 threadsCols(IMAGE_PATCH_WIDTH, IMAGE_PATCH_HEIGHT);
+    dim3 threadsCols(IMAGE_PATCH_HEIGHT, IMAGE_PATCH_WIDTH);
     dim3 blocksCols(height / threadsCols.x + (height % threadsCols.x ? 1 : 0), width / threadsCols.y + (width % threadsCols.y ? 1 : 0));
 
+    // Create events for measuring the performance of each of the kernels
+    cudaEvent_t start, buf1, buf2, finish;
+    float timeRows, timeCols;
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&buf1);
+    cudaEventCreate(&buf2);
+    cudaEventCreate(&finish);
+
+    // Run the kernels
+    cudaEventRecord(start, 0);
     sepFilterRows <<<blocksRows, threadsRows>>> (d_Buf, d_Src, d_Krn, width, height, krnSize);
+    cudaEventRecord(buf1, 0);
+    cudaEventSynchronize( buf1 );
+
+    /////
+    cudaEventRecord(buf2, 0);
     sepFilterCols <<<blocksCols, threadsCols>>> (d_Out, d_Buf, d_Krn, width, height, krnSize);
+    cudaEventRecord(finish, 0);
+    cudaEventSynchronize(finish);
+
+    // Check for errors
+//    cudaError_t error = cudaGetLastError();
+//    if (error != cudaSuccess)
+//    {
+//        // something's gone wrong
+//        // print out the CUDA error as a string
+//        printf("CUDA Error: %s\n", cudaGetErrorString(error));
+//        return;
+//    }
+
+    // Calculate elapsed time
+
+    cudaEventElapsedTime(&timeRows, start, buf1);
+    cudaEventElapsedTime(&timeCols, buf2, finish);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(buf1);
+    cudaEventDestroy(buf2);
+    cudaEventDestroy(finish);
+
+    std::cout << "frame times: rows: " << timeRows << "ms, cols: " << timeCols << "ms\n";
+    std::cout << "fps: rows: " << 1000.0/timeRows << "fps, cols: " << 1000.0/timeCols << "fps\n";
+
 
     // TODO: make use of local memory & cooperative groups
     // TODO: copy convolution kernel to constant memory
