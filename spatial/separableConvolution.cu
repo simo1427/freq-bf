@@ -6,9 +6,17 @@
 
 #define IMAGE_PATCH_WIDTH 64
 #define IMAGE_PATCH_HEIGHT 16
-#define MAX_HKS 63
+#define MAX_KS 64
+#define MAX_HKS (MAX_KS / 2)
 
-__global__ void sepFilterRows(float* d_Out, float* d_Src, float* d_Krn, int width, int height, int krnSize) {
+__constant__ float d_Krn[MAX_KS];
+
+void setConvolutionKernel(float* h_Krn, int krnSize)
+{
+    cudaMemcpyToSymbol(d_Krn, h_Krn, krnSize * sizeof(float));
+}
+
+__global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height, int krnSize) {
     unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -46,7 +54,7 @@ __global__ void sepFilterRows(float* d_Out, float* d_Src, float* d_Krn, int widt
 
 }
 
-__global__ void sepFilterCols(float* d_Out, float* d_Src, float* d_Krn, int width, int height, int krnSize) {
+__global__ void sepFilterCols(float* d_Out, float* d_Src, int width, int height, int krnSize) {
     unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -82,7 +90,7 @@ __global__ void sepFilterCols(float* d_Out, float* d_Src, float* d_Krn, int widt
 
 }
 
-void sepFilter(float* d_Out, float* d_Src, float* d_Buf, float* d_Krn, int width, int height, int krnSize)
+void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, int krnSize)
 {
 //    dim3 threads(1, 1);
 //    dim3 blocks(1, 1);
@@ -103,13 +111,13 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, float* d_Krn, int width
 
     // Run the kernels
     cudaEventRecord(start, 0);
-    sepFilterRows <<<blocksRows, threadsRows>>> (d_Buf, d_Src, d_Krn, width, height, krnSize);
+    sepFilterRows <<<blocksRows, threadsRows>>> (d_Buf, d_Src, width, height, krnSize);
     cudaEventRecord(buf1, 0);
     cudaEventSynchronize( buf1 );
 
     /////
     cudaEventRecord(buf2, 0);
-    sepFilterCols <<<blocksCols, threadsCols>>> (d_Out, d_Buf, d_Krn, width, height, krnSize);
+    sepFilterCols <<<blocksCols, threadsCols>>> (d_Out, d_Buf, width, height, krnSize);
     cudaEventRecord(finish, 0);
     cudaEventSynchronize(finish);
 

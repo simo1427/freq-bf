@@ -8,7 +8,7 @@
 #include "spatial/separableConvolution.cuh"
 //#include <assert.h>
 
-
+#define DEBUG_OUT(x) std::cout << #x << "= " << x << "\n"
 
 int main(int argc, char** argv) {
 
@@ -74,15 +74,12 @@ int main(int argc, char** argv) {
     float* dOut;
     checkCudaErrors(cudaMalloc(&dOut, frameSize * sizeof(float)));
 
-    float* dKrn;
-    checkCudaErrors(cudaMalloc(&dKrn, kernel.rows * sizeof(float)));
-
     // Load image into the inp buf
     checkCudaErrors(cudaMemcpy(dInp, frame.ptr<float>(), frameSize * sizeof(float), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(dKrn, kernel.ptr<float>(), kernel.rows * sizeof(float),  cudaMemcpyHostToDevice));
+    setConvolutionKernel(kernel.ptr<float>(), kernel.rows);
 
     // Execute kernel
-    sepFilter(dOut, dInp, dBuf, dKrn, w, h, spatialKernelSize);
+    sepFilter(dOut, dInp, dBuf, w, h, spatialKernelSize);
     // Copy back from GPU
 
     checkCudaErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
