@@ -22,8 +22,9 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
-    double sigmaSpatial = 5;
+    double sigmaSpatial = 8;
     int spatialKernelSize = static_cast<int>(round(sigmaSpatial * 1.5f) * 2 + 1);
+    DEBUG_OUT(spatialKernelSize);
     double sigmaRange = 0.35;
     double T = 2;
     int numberOfCoefficients = 10;
@@ -52,7 +53,6 @@ int main(int argc, char** argv) {
     //TODO: use parameters instead of hardcoded ones
     kernel = cv::getGaussianKernel(spatialKernelSize, sigmaSpatial, CV_32F);
 
-
     std::cout << "Gaussian kernel:\n";
     for (int i = 0; i < kernel.rows; i++) {
         std::cout << kernel.ptr<float>()[i] << " ";
@@ -66,24 +66,35 @@ int main(int argc, char** argv) {
     // to ensure the last kernel can sum all components. This will be handled once
     // the bilateral filter approximation will be implemented.
 
-
+    size_t pitch;
     float* dInp;
-    checkCudaErrors(cudaMalloc(&dInp, frameSize * sizeof(float)));
+    checkCudaErrors(cudaMallocPitch(&dInp, &pitch, frame.cols * sizeof(float), frame.rows));
     float* dBuf;
-    checkCudaErrors(cudaMalloc(&dBuf, frameSize * sizeof(float)));
+    checkCudaErrors(cudaMallocPitch(&dBuf, &pitch, frame.cols * sizeof(float), frame.rows));
     float* dOut;
-    checkCudaErrors(cudaMalloc(&dOut, frameSize * sizeof(float)));
+    checkCudaErrors(cudaMallocPitch(&dOut, &pitch, frame.cols * sizeof(float), frame.rows));
 
     // Load image into the inp buf
-    checkCudaErrors(cudaMemcpy(dInp, frame.ptr<float>(), frameSize * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy2D(dInp, pitch,
+                                 frame.ptr<float>(), frame.cols * sizeof(float),
+                                 frame.cols * sizeof(float), frame.rows,
+                                 cudaMemcpyHostToDevice));
     setConvolutionKernel(kernel.ptr<float>(), kernel.rows);
 
     // Execute kernel
-    sepFilter(dOut, dInp, dBuf, w, h, spatialKernelSize);
+    sepFilter(dOut, dInp, dBuf, w, h, spatialKernelSize, pitch);
+    sepFilter(dOut, dInp, dBuf, w, h, spatialKernelSize, pitch); // use these timings
+
     // Copy back from GPU
 
-    checkCudaErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
+    //TODO: uncomment that, important!!!!
+//    checkCudaErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
 
+//    checkCudaErrors(cudaMemcpy(filterOut.ptr(), dBuf , frameSize * sizeof(float), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy2D(filterOut.ptr<float>(), frame.cols * sizeof(float),
+                                 dOut, pitch,
+                                 frame.cols * sizeof(float), frame.rows,
+                                 cudaMemcpyDeviceToHost));
 //    cv::imshow("in", frame);
 //    cv::imshow("out", filterOut);
     cv::imwrite("./out.tif", filterOut);

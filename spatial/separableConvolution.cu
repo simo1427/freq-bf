@@ -10,7 +10,7 @@
 #define IMAGE_PATCH_ROWS_HEIGHT 16
 
 #define MAX_KS 64
-#define MAX_HKS (MAX_KS / 2)
+#define MAX_HKS 32
 
 __constant__ float d_Krn[MAX_KS];
 
@@ -19,7 +19,7 @@ void setConvolutionKernel(float* h_Krn, int krnSize)
     cudaMemcpyToSymbol(d_Krn, h_Krn, krnSize * sizeof(float));
 }
 
-__global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height, int krnSize) {
+__global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height, int krnSize, size_t pitch) {
     unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -32,7 +32,7 @@ __global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height,
 
     float sum = 0;
 
-
+    float* d_SrcRow = (float*) ((char*)d_Src + i * pitch);
     for (int krnI = -hks; krnI <= hks; krnI++)
     {
         int tmpJ = j + krnI;
@@ -42,22 +42,17 @@ __global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height,
         else if (tmpJ >= width)
             tmpJ = 2 * width - tmpJ - 2;
 
-//        printf("%d %d;;", j, tmpJ);
-        //TODO: for debug purpose, remove after debugged!
+        sum += d_Krn[hks + krnI] * d_SrcRow[tmpJ]; // TODO: introduce shared memory
 
-        int addr = i * width + tmpJ;
-        sum += d_Krn[hks + krnI] * d_Src[addr]; // TODO: introduce shared memory
-
-//        printf("(%d) %f * %f  -> %f\n", d_Src[addr], curPx, d_Krn[hks + krnI], sum);
     }
 
-
-    d_Out[i * width + j] = sum;
+    float* d_OutPtr = (float*) ((char*)d_Out + i * pitch);
+    d_OutPtr[j] = sum;
 
 
 }
 
-__global__ void sepFilterCols(float* d_Out, float* d_Src, int width, int height, int krnSize) {
+__global__ void sepFilterCols(float* d_Out, float* d_Src, int width, int height, int krnSize, size_t pitch) {
     unsigned int i = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -79,21 +74,20 @@ __global__ void sepFilterCols(float* d_Out, float* d_Src, int width, int height,
         else if (tmpI >= height)
             tmpI = 2 * height - tmpI - 2;
 
-//        printf("%d %d;;", j, tmpJ);
-        //TODO: for debug purpose, remove after debugged!
+        float* d_SrcRow = (float*) ((char*)d_Src + tmpI * pitch);
 
-        int addr = tmpI * width + j;
-        sum += d_Krn[hks + krnI] * d_Src[addr]; // TODO: introduce shared memory
+        sum += d_Krn[hks + krnI] * d_SrcRow[j]; // TODO: introduce shared memory
+        // also, this probably will lead to maaaany uncoalesced accesses, rethink how to handle this part
 
-//        printf("(%d) %f * %f  -> %f\n", d_Src[addr], curPx, d_Krn[hks + krnI], sum);
     }
 
 
-    d_Out[i * width + j] = sum;
+    float* d_OutPtr = (float*) ((char*)d_Out + i * pitch);
+    d_OutPtr[j] = sum;
 
 }
 
-void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, int krnSize)
+void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, int krnSize, size_t pitch)
 {
 //    dim3 threads(1, 1);
 //    dim3 blocks(1, 1);
@@ -105,7 +99,7 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, 
 
     // Create events for measuring the performance of each of the kernels
     cudaEvent_t start, buf1, buf2, finish;
-    float timeRows, timeCols;
+    float timeRows, timeCols = 0;
 
     cudaEventCreate(&start);
     cudaEventCreate(&buf1);
@@ -114,25 +108,24 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, 
 
     // Run the kernels
     cudaEventRecord(start, 0);
-    sepFilterRows <<<blocksRows, threadsRows>>> (d_Buf, d_Src, width, height, krnSize);
+    sepFilterRows <<<blocksRows, threadsRows>>> (d_Buf, d_Src, width, height, krnSize, pitch);
     cudaEventRecord(buf1, 0);
     cudaEventSynchronize( buf1 );
 
-    /////
     cudaEventRecord(buf2, 0);
-    sepFilterCols <<<blocksCols, threadsCols>>> (d_Out, d_Buf, width, height, krnSize);
+    sepFilterCols <<<blocksCols, threadsCols>>> (d_Out, d_Buf, width, height, krnSize, pitch);
     cudaEventRecord(finish, 0);
     cudaEventSynchronize(finish);
 
     // Check for errors
-//    cudaError_t error = cudaGetLastError();
-//    if (error != cudaSuccess)
-//    {
-//        // something's gone wrong
-//        // print out the CUDA error as a string
-//        printf("CUDA Error: %s\n", cudaGetErrorString(error));
-//        return;
-//    }
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess)
+    {
+        // something's gone wrong
+        // print out the CUDA error as a string
+        printf("CUDA Error: %s\n", cudaGetErrorString(error));
+        return;
+    }
 
     // Calculate elapsed time
 
