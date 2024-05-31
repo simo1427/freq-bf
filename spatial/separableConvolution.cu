@@ -4,8 +4,11 @@
 #include <stdio.h> // for within CUDA kernels for debugging purposes
 #include <iostream>
 
-#define IMAGE_PATCH_WIDTH 64
-#define IMAGE_PATCH_HEIGHT 16
+#define IMAGE_PATCH_COLS_WIDTH 64
+#define IMAGE_PATCH_COLS_HEIGHT 16
+#define IMAGE_PATCH_ROWS_WIDTH 64
+#define IMAGE_PATCH_ROWS_HEIGHT 16
+
 #define MAX_KS 64
 #define MAX_HKS (MAX_KS / 2)
 
@@ -94,10 +97,10 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, 
 {
 //    dim3 threads(1, 1);
 //    dim3 blocks(1, 1);
-    dim3 threadsRows(IMAGE_PATCH_HEIGHT, IMAGE_PATCH_WIDTH);
+    dim3 threadsRows(IMAGE_PATCH_ROWS_HEIGHT, IMAGE_PATCH_ROWS_WIDTH);
     dim3 blocksRows(height / threadsRows.x + (height % threadsRows.x ? 1 : 0), width / threadsRows.y + (width % threadsRows.y ? 1 : 0));
 
-    dim3 threadsCols(IMAGE_PATCH_HEIGHT, IMAGE_PATCH_WIDTH);
+    dim3 threadsCols(IMAGE_PATCH_COLS_HEIGHT, IMAGE_PATCH_COLS_WIDTH);
     dim3 blocksCols(height / threadsCols.x + (height % threadsCols.x ? 1 : 0), width / threadsCols.y + (width % threadsCols.y ? 1 : 0));
 
     // Create events for measuring the performance of each of the kernels
