@@ -9,6 +9,8 @@ add_executable(cuda_bf main.cu utils.cu utils.cuh spatial/separableConvolution.c
 set_target_properties(cuda_bf PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
 
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+
 find_package(OpenCV REQUIRED )
 find_package(GSL REQUIRED )
 find_package(CLI11 CONFIG REQUIRED)
