@@ -12,7 +12,7 @@
 #define MAX_COEFS_NUM 20 // TODO: check for a better value, possibly derived from the amount of VRAM
 
 __constant__ float d_Coefs[MAX_COEFS_NUM];
-__constant__ float2 trigLut[256][MAX_COEFS_NUM];
+__constant__ float2 d_trigLut[256][MAX_COEFS_NUM];
 // TODO: is this an efficient memory layout?
 // shouldn't be a problem, as constant memory should take care of that according to the CUDA C++ Programming Guide
 
@@ -23,14 +23,17 @@ void setCoefficients(float* h_Coefs, int n)
 
 void populateLut(int numberOfCoefficients, float T)
 {
+    float2 h_trigLut[256][MAX_COEFS_NUM];
     for (int k = 0; k < numberOfCoefficients; k++)
     {
         for (int j = 0; j < 256; j++)
         {
-            trigLut[j][k].x = cos(2 * M_PI * k / T);
-            trigLut[j][k].y = sin(2 * M_PI * k / T);
+            h_trigLut[j][k].x = cos(2 * M_PI * k / T);
+            h_trigLut[j][k].y = sin(2 * M_PI * k / T);
         }
     }
+
+    cudaMemcpyToSymbol(d_trigLut, h_trigLut, 256 * MAX_COEFS_NUM * sizeof(float));
 }
 
 __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int height, int numberOfCoefficients)
@@ -48,15 +51,13 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
     {
         float4 tmp; // order: w:cos x:sin ycosIntensity z:sinIntensity
 
-        float2 vals = trigLut[px][k];
+        float2 vals = d_trigLut[px][k];
         tmp.w = vals.x;
         tmp.x = vals.y;
         tmp.y = px * vals.x;
         tmp.z = px * vals.y;
         d_Buf[i * width + j] = tmp;
     }
-
-
 }
 
 void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn, int numberOfCoefficients, float T)
@@ -83,7 +84,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 #endif
 
     // Copy the coefficients to constant memory
-    setCoefficients(coefsVec.data(), coefsVec.size());
+    setCoefficients(coefsVec.data(), coefsVec.size() * sizeof(float));
 
     populateLut(numberOfCoefficients, T);
 
