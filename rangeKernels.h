@@ -22,14 +22,15 @@ typedef double (*range_krn_t)(double, double); // define the type of function po
 const int GSL_INTEGRATION_WORKSPACE_LIMIT = 1000;
 const double SQRT_2_PI = sqrt(2 * M_PI);
 
-double
-gaussian(double x, double sigma);
+double gaussian(double x, double sigma);
 
-double
-gaussianUnscaled(double x, double sigma);
+double gaussianUnscaled(double x, double sigma);
 
-double
-huber(double x, double sigma);
+double huber(double x, double sigma);
+
+double tukey(double x, double sigma);
+
+double lorentz(double x, double sigma);
 
 range_krn_t
 rangeKrnProvider(std::string& name);

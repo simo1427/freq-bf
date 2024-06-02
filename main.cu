@@ -48,6 +48,7 @@ int main(int argc, char** argv) {
         }
     }
     cv::Mat filterOut(frame.rows, frame.cols, CV_32F);
+    assert(filterOut.isContinuous());
 
     int w = frame.cols; // placeholder width value
     int h = frame.rows; // placeholder height value
@@ -68,6 +69,8 @@ int main(int argc, char** argv) {
         std::cout << kernel.ptr<float>()[i] << " ";
     }
     std::cout << std::endl;
+
+    cv::imwrite("./gpuOut.tif", filterOut);
 //
 //    // CUDA buffers declaration
 //
