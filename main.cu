@@ -7,6 +7,7 @@
 #include "rangeKernels.h"
 #include "spatial/separableConvolution.cuh"
 #include "fastBilateral.cuh"
+#include "refBilateral.h"
 //#include <assert.h>
 
 #define DEBUG_OUT(x) std::cout << #x << "= " << x << "\n"
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
     double sigmaRange = 0.1;
     float T = 2;
     int numberOfCoefficients = 10;
+    range_krn_t rangeKrn = gaussian;
 
     std::cout << "Params: \n";
     DEBUG_OUT(sigmaRange);
@@ -60,9 +62,10 @@ int main(int argc, char** argv) {
 
     //TODO: use parameters instead of hardcoded ones
     kernel = cv::getGaussianKernel(spatialKernelSize, sigmaSpatial, CV_32F);
+    kernel2D = kernel * kernel.t(); // for the CPU method, the kernel needs to be a 2D array!!!
 
     // call the BF function
-    BF_approx_gpu(intFrame, filterOut, kernel, sigmaRange, gaussian, 0, T);
+    BF_approx_gpu(intFrame, filterOut, kernel, sigmaRange, rangeKrn, 0, T);
 
     std::cout << "Gaussian kernel:\n";
     for (int i = 0; i < kernel.rows; i++) {
@@ -101,29 +104,32 @@ int main(int argc, char** argv) {
 ////    cv::imshow("out", filterOut);
 //    cv::imwrite("./out.tif", filterOut);
 //
-//    auto dstGold = cv::Mat(frame.rows, frame.cols, CV_32F);
+
+    // Measure PSNR compared with CPU slow BF
+    auto bfGold = cv::Mat(frame.rows, frame.cols, CV_32F);
 //
-//    cv::sepFilter2D(frame, dstGold, CV_32F, kernel, kernel);
+    BF(frame, bfGold, kernel2D, sigmaRange, rangeKrn);
+
 //
-//    cv::Mat diff = dstGold - filterOut;
-//
-//    float mse = 0;
-//
-//    for (int i = 0; i < diff.rows ; i++) {
-//        float* errPtr = diff.ptr<float>(i);
-//        for (int j = 0; j < diff.cols; j++) {
-//            mse += errPtr[j] * errPtr[j];
-//        }
-//    }
-//
-//    mse /= ((diff.rows) * (diff.cols));
-//
-//    std::cout << "PSNR: " << 10 * log10(1 / mse) << " dB\n";
-//    cv::imwrite("./cv.tif", dstGold);
-//    cv::imwrite("./diff.tif", diff);
-//
-////    cv::waitKey(0);
-//    // Deallocate
+    cv::Mat diff = bfGold - filterOut;
+
+    float mse = 0;
+
+    for (int i = 0; i < diff.rows ; i++) {
+        float* errPtr = diff.ptr<float>(i);
+        for (int j = 0; j < diff.cols; j++) {
+            mse += errPtr[j] * errPtr[j];
+        }
+    }
+
+    mse /= ((diff.rows) * (diff.cols));
+
+    std::cout << "PSNR: " << 10 * log10(1 / mse) << " dB\n";
+    cv::imwrite("./slow.tif", bfGold);
+    cv::imwrite("./diff.tif", diff);
+
+//    cv::waitKey(0);
+    // Deallocate
 //
 //    cudaFree(dInp);
 //    cudaFree(dOut);

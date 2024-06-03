@@ -31,8 +31,6 @@ void populateLut(int numberOfCoefficients, float T)
         {
             h_trigLut[j][k].x = cosf(static_cast<float>(j / 255.0f) * 2.0f * M_PI * k / T);
             h_trigLut[j][k].y = sinf(static_cast<float>(j / 255.0f) * 2.0f * M_PI * k / T);
-            if (j == 186)
-                printf("LUT vals for 186: %f %f\n", h_trigLut[j][k].x, h_trigLut[j][k].y);
         }
     }
 
@@ -43,14 +41,6 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
-
-//    if (i == 0 && j == 0)
-//    {
-//        printf("coefficients from const mem:\n");
-//        for (int k = 0; k < numberOfCoefficients; k++)
-//            printf("%f,", d_Coefs[k]);
-//        printf("number of coefs: %d\n", numberOfCoefficients);
-//    }
 
     if (i >= height || j >= width)
         return;
@@ -66,13 +56,6 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
         float2 vals = d_trigLut[px][k];
         float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
         d_Buf[k * width * height + i * width + j] = tmp;
-//        if (i == 0 && j == 0)
-        if (i == 185 && j == 25)
-        {
-//            printf("%d: (%f %f),", k, vals.x, vals.y);
-            printf("%d/%f %d: (%f %f %f %f)", px, pxScaled, k, tmp.x, tmp.y, tmp.z, tmp.w);
-
-        }
         // TODO: maybe this is causing some errors?
     }
 }
@@ -93,10 +76,14 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_
     {
         float4 tmp = d_OutNonSummed[k * width * height + i * width + j]; // TODO: maybe this is causing some errors?
         float2 sinCosVals = d_trigLut[px][k];
-        W += d_Coefs[k] * (sinCosVals.x * tmp.x + sinCosVals.y * tmp.y);
-        sum += d_Coefs[k] * (sinCosVals.x * tmp.z + sinCosVals.y * tmp.w);
-        if (i == 185 && j == 25)
-            printf("%d %d: (sum=%f, W=%f);", px, k, sum, W);
+
+        // PSNR 51.7611 dB
+//        W += d_Coefs[k] * (sinCosVals.x * tmp.x + sinCosVals.y * tmp.y);
+//        sum += d_Coefs[k] * (sinCosVals.x * tmp.z + sinCosVals.y * tmp.w);
+
+        // PSNR 51.7611 dB
+        W = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.x + sinCosVals.y * tmp.y, W);
+        sum = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.z + sinCosVals.y * tmp.w, sum);
     }
 
     d_Out[i * width + j] = sum / W;
@@ -111,7 +98,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     if (numberOfCoefficients == 0)
         // modified heuristic compared to Honours project
-        numberOfCoefficients =(int)ceil(3 * 2 / (6 * sigmaRange)) + 1;
+        numberOfCoefficients =(int)ceil(1.5 * 2 / (6 * sigmaRange)) + 1;
 
     auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
     std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
@@ -154,18 +141,25 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     checkCudaErrors(cudaMemcpy(d_Inp, input.ptr<uint8_t>(), frameSize * sizeof(uint8_t), cudaMemcpyHostToDevice));
 
+    // create events for measuring execution time
+    cudaEvent_t start, finish;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&finish);
+
     // execute kernels
 
     dim3 populateThreads(BF_POPULATE_HEIGHT, BF_POPULATE_WIDTH);
     dim3 populateBlocks(height / populateThreads.x + (height % populateThreads.x ? 1 : 0), width / populateThreads.y + (width % populateThreads.y ? 1 : 0));
 
-    printf("Number of coefficients: %d\n", numberOfCoefficients);
+//    printf("Number of coefficients: %d\n", numberOfCoefficients);
+    cudaEventRecord(start, 0);
     fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp, d_BfBuf, width, height, numberOfCoefficients);
 
     // TODO: enqueue convolutions for each of the images in memory
-    printf("bufSize: %d\n", frameSize * numberOfCoefficients * sizeof(float4));
+//    printf("bufSize: %d\n", frameSize * numberOfCoefficients * sizeof(float4));
     for (int i = 0; i < numberOfCoefficients; i++) {
-        printf("Enqueued %d\n", i);
+//        printf("Enqueued %d\n", i);
         sepFilterf4(d_OutNonSummed + i * frameSize,
                     d_BfBuf + i * frameSize,
                     d_OutNonSummedBuf + i * frameSize, // i * frameSize * sizeof(float4)
@@ -173,16 +167,13 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                     height,
                     spatialKernel.rows);
     }
-
-    cudaDeviceSynchronize(); //might not be necessary if the calls are on the same stream
-    printf("successfully sync'ed\n");
-
     collectResults<<<populateBlocks, populateThreads>>>(d_OutNonSummed, d_Inp, d_OutSummed, width, height, numberOfCoefficients);
+    cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
+    cudaEventSynchronize(finish);
+    cudaEventElapsedTime(&elapsedTime, start, finish);
     // copy result back from the GPU
 
-    cudaDeviceSynchronize(); //might not be necessary if the calls are on the same stream
-    printf("successfully sync'ed 2!\n");
-
+#ifdef DEBUG_CUDA_BF
     float4* h_BfBuf = (float4*) malloc(frameSize * numberOfCoefficients * sizeof(float4));
 
     checkCudaErrors(cudaMemcpy(h_BfBuf, d_BfBuf, numberOfCoefficients * frameSize * sizeof(float4), cudaMemcpyDeviceToHost));
@@ -228,15 +219,20 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     }
     cv::imwrite("./sinIntensityImg.tif", debugOut, {cv::ImwriteFlags::IMWRITE_TIFF_COMPRESSION, 0});
 
+    free(h_BfBuf);
+#endif
     checkCudaErrors(cudaMemcpy(output.ptr<float>(), d_OutSummed, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
 
+    printf("Elapsed time: %f ms\n", elapsedTime);
 
+    // cleanup
+    cudaEventDestroy(start);
+    cudaEventDestroy(finish);
     cudaFree(d_Inp);
     cudaFree(d_OutSummed);
     cudaFree(d_OutNonSummed);
     cudaFree(d_BfBuf);
     cudaFree(d_OutNonSummedBuf);
-    free(h_BfBuf);
     return;
 
 }
