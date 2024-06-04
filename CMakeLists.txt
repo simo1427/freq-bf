@@ -1,20 +1,29 @@
 cmake_minimum_required(VERSION 3.25)
 project(cuda_bf CUDA CXX)
 
-set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CXX_STANDARD 20)
+add_executable(cuda_bf
+	"main.cu"
+	"utils.cu"
+	"utils.cuh"
+	"spatial/separableConvolution.cu"
+	"spatial/separableConvolution.cuh"
+	"rangeKernels.h"
+	"rangeKernels.cpp"
+	"refBilateral.h"
+	"refBilateral.cpp"
+	"fastBilateral.cu"
+	"fastBilateral.cuh"
+	 "cuda_math.h")
+target_include_directories(cuda_bf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(cuda_bf main.cu utils.cu utils.cuh spatial/separableConvolution.cu spatial/separableConvolution.cuh rangeKernels.h rangeKernels.cpp refBilateral.h refBilateral.cpp fastBilateral.cu fastBilateral.cuh)
-
+target_compile_features(cuda_bf PUBLIC cxx_std_20 cuda_std_20)
 set_target_properties(cuda_bf PROPERTIES
-        CUDA_SEPARABLE_COMPILATION ON)
+	CUDA_SEPARABLE_COMPILATION ON
+	CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+target_compile_options(cuda_bf PUBLIC "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G>")
+target_compile_options(cuda_bf PUBLIC "$<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANGUAGE:CUDA>>:-lineinfo>")
 
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
-
-find_package(OpenCV REQUIRED )
-find_package(GSL REQUIRED )
+find_package(OpenCV REQUIRED)
+find_package(GSL REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
-
-target_link_libraries(cuda_bf PRIVATE ${OpenCV_LIBS})
-target_link_libraries(cuda_bf PRIVATE GSL::gsl GSL::gslcblas)
-target_link_libraries(cuda_bf PRIVATE CLI11::CLI11)
+target_link_libraries(cuda_bf PUBLIC ${OpenCV_LIBS} GSL::gsl GSL::gslcblas CLI11::CLI11)
