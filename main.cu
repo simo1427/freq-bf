@@ -75,36 +75,7 @@ int main(int argc, char** argv) {
     std::cout << std::endl;
 
     cv::imwrite("./gpuOut.tif", filterOut);
-//
-//    // CUDA buffers declaration
-//
-//    // - Buffers for the component images GPU kernels
-//    // This has to be better thought out - the buffer should be contiguous in memory
-//    // to ensure the last kernel can sum all components. This will be handled once
-//    // the bilateral filter approximation will be implemented.
-//
-//
-//    float* dInp;
-//    checkCudaErrors(cudaMalloc(&dInp, frameSize * sizeof(float)));
-//    float* dBuf;
-//    checkCudaErrors(cudaMalloc(&dBuf, frameSize * sizeof(float)));
-//    float* dOut;
-//    checkCudaErrors(cudaMalloc(&dOut, frameSize * sizeof(float)));
-//
-//    // Load image into the inp buf
-//    checkCudaErrors(cudaMemcpy(dInp, frame.ptr<float>(), frameSize * sizeof(float), cudaMemcpyHostToDevice));
-//    setConvolutionKernel(kernel.ptr<float>(), kernel.rows);
-//
-//    // Execute kernel
-//    sepFilter(dOut, dInp, dBuf, w, h, spatialKernelSize);
-//    // Copy back from GPU
-//
-//    checkCudaErrors(cudaMemcpy(filterOut.ptr(), dOut, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
-//
-////    cv::imshow("in", frame);
-////    cv::imshow("out", filterOut);
-//    cv::imwrite("./out.tif", filterOut);
-//
+
 
     // Measure PSNR compared with CPU slow BF
     auto bfGold = cv::Mat(frame.rows, frame.cols, CV_32F);

@@ -6,7 +6,7 @@
 #include "utils.cuh"
 #include "spatial/separableConvolution.cuh"
 
-#define BF_POPULATE_WIDTH 16
+#define BF_POPULATE_WIDTH 32
 #define BF_POPULATE_HEIGHT 16
 
 
@@ -37,7 +37,7 @@ void populateLut(int numberOfCoefficients, float T)
     cudaMemcpyToSymbol(d_trigLut, h_trigLut, 256 * MAX_COEFS_NUM * sizeof(float2));
 }
 
-__global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int height, int numberOfCoefficients)
+__global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int height, int k, size_t srcPitch, size_t bufPitch)
 {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
@@ -46,22 +46,26 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
         return;
 
     // TODO: shared memory? maybe first pitched memory, then shared...
-    uint8_t px = d_Inp[i * width + j];
+    uint8_t* d_InpRow = d_Inp + i * srcPitch;
+
+    uint8_t px = d_InpRow[j];
+    // TODO: the trick for accessing many uint8_t's at the same time? I saw that recently in an NVIDIA presentation
 
     float pxScaled = static_cast<float>(px) / 255.0f;
-    for (int k = 0; k < numberOfCoefficients; k++)
-    {
-        // order: x:cos y:sin z:cosIntensity w:sinIntensity
 
-        float2 vals = d_trigLut[px][k];
-        float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
-        d_Buf[k * width * height + i * width + j] = tmp;
-        // TODO: maybe this is causing some errors?
-    }
+    // order: x:cos y:sin z:cosIntensity w:sinIntensity
+
+    float2 vals = d_trigLut[px][k];
+    float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
+
+    float4* d_BufRow = (float4*) ((char*) d_Buf + i * bufPitch);
+    d_BufRow[j] = tmp;
+
 }
 
-__global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_Out, int width, int height, int numOfCoefs)
+__global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_Out, int width, int height, int k, size_t inpPitch, size_t bufPitch, size_t outPitch)
 {
+    // TODO: make d_Out a float2, then process on the cpu?
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -70,23 +74,54 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_
 
     float sum = 0;
     float W = 0; // normalization factor
-    uint8_t px = d_Inp[i * width + j];
 
-    for (int k = 0; k < numOfCoefs; k++)
-    {
-        float4 tmp = d_OutNonSummed[k * width * height + i * width + j]; // TODO: maybe this is causing some errors?
-        float2 sinCosVals = d_trigLut[px][k];
+    uint8_t* d_InpRow = d_Inp + i * inpPitch;
+    uint8_t px = d_Inp[j];
 
-        // PSNR 51.7611 dB
+    float4* d_OutNonSummedRow = (float4*)((char*) d_OutNonSummed + i * bufPitch);
+    float4 tmp = d_OutNonSummedRow[j];
+    float2 sinCosVals = d_trigLut[px][k];
+
+    // PSNR 51.7611 dB
 //        W += d_Coefs[k] * (sinCosVals.x * tmp.x + sinCosVals.y * tmp.y);
 //        sum += d_Coefs[k] * (sinCosVals.x * tmp.z + sinCosVals.y * tmp.w);
 
-        // PSNR 51.7611 dB
-        W = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.x + sinCosVals.y * tmp.y, W);
-        sum = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.z + sinCosVals.y * tmp.w, sum);
+    // PSNR 51.7611 dB
+    W = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.x + sinCosVals.y * tmp.y, W);
+    sum = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.z + sinCosVals.y * tmp.w, sum);
+
+    float* d_OutRow = (float*) ((char*)d_Out + i * outPitch);
+    d_OutRow[j] = sum / W;
+}
+
+void debugOutBuf(float4* h_BfBuf, int rows, int cols)
+{
+    cv::Mat dbgOut = cv::Mat(rows, cols, CV_32F);
+    std::string filenames[] = {"./cosImg.tif", "./sinImg.tif", "./cosIntensityImg.tif", "./sinIntensityImg.tif"};
+
+    for (int k = 0; k < 4; k++)
+    {
+        for (int i = 0; i < rows; i++)
+        {
+            float* ptrDbgOut = dbgOut.ptr<float>(i);
+
+            union {
+                float4 oneWord;
+                float fourFloats[4];
+            } tmp;
+
+            for (int j = 0; j < cols; j++)
+            {
+                tmp.oneWord = h_BfBuf[i * cols + j];
+                ptrDbgOut[j] = tmp.fourFloats[k];
+            }
+        }
+
+        cv::imwrite(filenames[k], dbgOut);
+
     }
 
-    d_Out[i * width + j] = sum / W;
+    dbgOut.release();
 }
 
 void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn, int numberOfCoefficients, float T)
@@ -123,23 +158,35 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     // Allocate arrays for intermediate images
 
     int frameSize = input.rows * input.cols;
+    size_t uint8Pitch, floatPitch, float4Pitch;
 
     uint8_t* d_Inp;
-    checkCudaErrors(cudaMalloc(&d_Inp, frameSize * sizeof(uint8_t)));
+    checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,
+                                    input.cols * sizeof(uint8_t), input.rows));
 
     float* d_OutSummed;
-    checkCudaErrors(cudaMalloc(&d_OutSummed, frameSize * sizeof(float)));
+    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &floatPitch,
+                                    input.cols * sizeof(float), input.rows));
 
     float4* d_BfBuf;
-    checkCudaErrors(cudaMalloc(&d_BfBuf, frameSize * numberOfCoefficients * sizeof(float4)));
+//    checkCudaErrors(cudaMalloc(&d_BfBuf, frameSize * numberOfCoefficients * sizeof(float4)));
+    checkCudaErrors(cudaMallocPitch(&d_BfBuf, &float4Pitch,
+                                    input.cols * sizeof(float4), input.rows));
     float4* d_OutNonSummed;
-    checkCudaErrors(cudaMalloc(&d_OutNonSummed, frameSize * numberOfCoefficients * sizeof(float4)));
+//    checkCudaErrors(cudaMalloc(&d_OutNonSummed, frameSize * numberOfCoefficients * sizeof(float4)));
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummed, &float4Pitch,
+                                    input.cols * sizeof(float4), input.rows));
     float4* d_OutNonSummedBuf;
-    checkCudaErrors(cudaMalloc(&d_OutNonSummedBuf, frameSize * numberOfCoefficients * sizeof(float4)));
+//    checkCudaErrors(cudaMalloc(&d_OutNonSummedBuf, frameSize * numberOfCoefficients * sizeof(float4)));
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummedBuf, &float4Pitch,
+                                    input.cols * sizeof(float4), input.rows));
 
     // copy the image to the GPU
 
-    checkCudaErrors(cudaMemcpy(d_Inp, input.ptr<uint8_t>(), frameSize * sizeof(uint8_t), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy2D(d_Inp, uint8Pitch,
+                                 input.ptr<uint8_t>(), input.cols * sizeof(uint8_t),
+                                 input.cols * sizeof(uint8_t), input.rows,
+                                 cudaMemcpyHostToDevice));
 
     // create events for measuring execution time
     cudaEvent_t start, finish;
@@ -152,76 +199,52 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     dim3 populateThreads(BF_POPULATE_HEIGHT, BF_POPULATE_WIDTH);
     dim3 populateBlocks(height / populateThreads.x + (height % populateThreads.x ? 1 : 0), width / populateThreads.y + (width % populateThreads.y ? 1 : 0));
 
+    // for debug image output
+    float4* h_BfBuf = (float4*) malloc(frameSize * sizeof(float4));
+
 //    printf("Number of coefficients: %d\n", numberOfCoefficients);
     cudaEventRecord(start, 0);
-    fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp, d_BfBuf, width, height, numberOfCoefficients);
+
 
     // TODO: enqueue convolutions for each of the images in memory
 //    printf("bufSize: %d\n", frameSize * numberOfCoefficients * sizeof(float4));
     for (int i = 0; i < numberOfCoefficients; i++) {
 //        printf("Enqueued %d\n", i);
-        sepFilterf4(d_OutNonSummed + i * frameSize,
-                    d_BfBuf + i * frameSize,
-                    d_OutNonSummedBuf + i * frameSize, // i * frameSize * sizeof(float4)
+        fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp,
+                                                            d_BfBuf, width, height, i, uint8Pitch, float4Pitch);
+
+        sepFilterf4(d_OutNonSummed,
+                    d_BfBuf,
+                    d_OutNonSummedBuf, // i * frameSize * sizeof(float4)
                     width,
                     height,
-                    spatialKernel.rows);
+                    spatialKernel.rows,
+                    float4Pitch);
+
+//        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+//                                     d_OutNonSummed, float4Pitch,
+//                                     input.cols * sizeof(float4), input.rows,
+//                                     cudaMemcpyDeviceToHost));
+//        debugOutBuf(h_BfBuf, input.rows, input.cols);
+
+        collectResults<<<populateBlocks, populateThreads>>>(d_OutNonSummed,
+                                                            d_Inp, d_OutSummed, width, height, i, uint8Pitch, float4Pitch, floatPitch);
+
     }
-    collectResults<<<populateBlocks, populateThreads>>>(d_OutNonSummed, d_Inp, d_OutSummed, width, height, numberOfCoefficients);
     cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
     cudaEventSynchronize(finish);
     cudaEventElapsedTime(&elapsedTime, start, finish);
     // copy result back from the GPU
 
-#ifdef DEBUG_CUDA_BF
-    float4* h_BfBuf = (float4*) malloc(frameSize * numberOfCoefficients * sizeof(float4));
 
-    checkCudaErrors(cudaMemcpy(h_BfBuf, d_BfBuf, numberOfCoefficients * frameSize * sizeof(float4), cudaMemcpyDeviceToHost));
+//    checkCudaErrors(cudaMemcpy(output.ptr<float>(), d_OutSummed, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy2D(output.ptr<float>(), input.cols * sizeof(float),
+                                 d_OutSummed, floatPitch,
+                                 input.cols * sizeof(float), input.rows,
+                                 cudaMemcpyDeviceToHost));
 
-    auto debugOut = cv::Mat(height, width, CV_32F);
-    for (int i = 0; i < height; i++)
-    {
-        float* ptrDebugOut = debugOut.ptr<float>(i);
-        for (int j = 0; j < width; j++)
-        {
-            ptrDebugOut[j] = h_BfBuf[2 * width * height + i * width + j].x;
-        }
-    }
-    cv::imwrite("./cosImg.tif", debugOut, {cv::ImwriteFlags::IMWRITE_TIFF_COMPRESSION, 0});
-
-    for (int i = 0; i < height; i++)
-    {
-        float* ptrDebugOut = debugOut.ptr<float>(i);
-        for (int j = 0; j < width; j++)
-        {
-            ptrDebugOut[j] = h_BfBuf[2 * width * height + i * width + j].y;
-        }
-    }
-    cv::imwrite("./sinImg.tif", debugOut, {cv::ImwriteFlags::IMWRITE_TIFF_COMPRESSION, 0});
-
-    for (int i = 0; i < height; i++)
-    {
-        float* ptrDebugOut = debugOut.ptr<float>(i);
-        for (int j = 0; j < width; j++)
-        {
-            ptrDebugOut[j] = h_BfBuf[2 * width * height + i * width + j].z;
-        }
-    }
-    cv::imwrite("./cosIntensityImg.tif", debugOut, {cv::ImwriteFlags::IMWRITE_TIFF_COMPRESSION, 0});
-
-    for (int i = 0; i < height; i++)
-    {
-        float* ptrDebugOut = debugOut.ptr<float>(i);
-        for (int j = 0; j < width; j++)
-        {
-            ptrDebugOut[j] = h_BfBuf[2 * width * height + i * width + j].w;
-        }
-    }
-    cv::imwrite("./sinIntensityImg.tif", debugOut, {cv::ImwriteFlags::IMWRITE_TIFF_COMPRESSION, 0});
 
     free(h_BfBuf);
-#endif
-    checkCudaErrors(cudaMemcpy(output.ptr<float>(), d_OutSummed, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("Elapsed time: %f ms\n", elapsedTime);
 

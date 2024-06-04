@@ -4,10 +4,10 @@
 #include <stdio.h> // for within CUDA kernels for debugging purposes
 #include <iostream>
 
-#define IMAGE_PATCH_COLS_WIDTH 64
-#define IMAGE_PATCH_COLS_HEIGHT 16
-#define IMAGE_PATCH_ROWS_WIDTH 64
-#define IMAGE_PATCH_ROWS_HEIGHT 16
+#define IMAGE_PATCH_COLS_WIDTH 32
+#define IMAGE_PATCH_COLS_HEIGHT 32
+#define IMAGE_PATCH_ROWS_WIDTH 512
+#define IMAGE_PATCH_ROWS_HEIGHT 2
 
 #define MAX_KS 64
 #define MAX_HKS 32
@@ -19,7 +19,7 @@ void setConvolutionKernel(float* h_Krn, int krnSize)
     cudaMemcpyToSymbol(d_Krn, h_Krn, krnSize * sizeof(float));
 }
 
-__global__ void sepFilterRowsf4(float4* d_Out, float4* d_Src, int width, int height, int krnSize) {
+__global__ void sepFilterRowsf4(float4* d_Out, float4* d_Src, int width, int height, int krnSize, size_t pitch) {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -32,7 +32,7 @@ __global__ void sepFilterRowsf4(float4* d_Out, float4* d_Src, int width, int hei
 
     float4 sum = (float4)(0, 0, 0, 0);
 
-
+    float4* d_SrcRow = (float4*) ((char*) d_Src + i * pitch);
     for (int krnI = -hks; krnI <= hks; krnI++)
     {
         int tmpJ = j + krnI;
@@ -45,23 +45,22 @@ __global__ void sepFilterRowsf4(float4* d_Out, float4* d_Src, int width, int hei
 //        printf("%d %d;;", j, tmpJ);
         //TODO: for debug purpose, remove after debugged!
 
-        int addr = i * width + tmpJ;
         float spatialCoef = d_Krn[hks + krnI];
-        sum.w += spatialCoef * d_Src[addr].w;
-        sum.x += spatialCoef * d_Src[addr].x;
-        sum.y += spatialCoef * d_Src[addr].y;
-        sum.z += spatialCoef * d_Src[addr].z; // TODO: introduce shared memory
+        float4 pxVals = d_SrcRow[tmpJ];
+        sum.w += spatialCoef * pxVals.w;
+        sum.x += spatialCoef * pxVals.x;
+        sum.y += spatialCoef * pxVals.y;
+        sum.z += spatialCoef * pxVals.z; // TODO: introduce shared memory
 
 //        printf("(%d) %f * %f  -> %f\n", d_Src[addr], curPx, d_Krn[hks + krnI], sum);
     }
 
-
-    d_Out[i * width + j] = sum;
-
+    float4* d_OutRow = (float4*) ((char*) d_Out + i * pitch);
+    d_OutRow[j] = sum;
 
 }
 
-__global__ void sepFilterColsf4(float4* d_Out, float4* d_Src, int width, int height, int krnSize) {
+__global__ void sepFilterColsf4(float4* d_Out, float4* d_Src, int width, int height, int krnSize, size_t pitch) {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     int j = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -86,18 +85,18 @@ __global__ void sepFilterColsf4(float4* d_Out, float4* d_Src, int width, int hei
 //        printf("%d %d;;", j, tmpJ);
         //TODO: for debug purpose, remove after debugged!
 
-        int addr = tmpI * width + j;
+        float4* d_SrcRow = (float4*) ((char*) d_Src + pitch * tmpI);
         float spatialCoef = d_Krn[hks + krnI];
-        sum.w += spatialCoef * d_Src[addr].w;
-        sum.x += spatialCoef * d_Src[addr].x;
-        sum.y += spatialCoef * d_Src[addr].y;
-        sum.z += spatialCoef * d_Src[addr].z; // TODO: introduce shared memory
+        sum.w += spatialCoef * d_SrcRow[j].w;
+        sum.x += spatialCoef * d_SrcRow[j].x;
+        sum.y += spatialCoef * d_SrcRow[j].y;
+        sum.z += spatialCoef * d_SrcRow[j].z; // TODO: introduce shared memory
 
 //        printf("(%d) %f * %f  -> %f\n", d_Src[addr], curPx, d_Krn[hks + krnI], sum);
     }
 
-
-    d_Out[i * width + j] = sum;
+    float4* d_OutRow = (float4*) ((char*) d_Out + i * pitch);
+    d_OutRow[j] = sum;
 
 }
 
@@ -130,7 +129,6 @@ __global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height,
 
     float* d_OutPtr = (float*) ((char*)d_Out + i * pitch);
     d_OutPtr[j] = sum;
-
 
 }
 
@@ -228,7 +226,7 @@ void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, 
     // TODO: copy convolution kernel to constant memory
 }
 
-void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int height, int krnSize)
+void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int height, int krnSize, size_t pitch)
 {
     // TODO: take stream as a param?
 
@@ -239,7 +237,7 @@ void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int hei
     dim3 threadsCols(IMAGE_PATCH_COLS_HEIGHT, IMAGE_PATCH_COLS_WIDTH);
     dim3 blocksCols(height / threadsCols.x + (height % threadsCols.x ? 1 : 0), width / threadsCols.y + (width % threadsCols.y ? 1 : 0));
 
-    sepFilterRowsf4 <<<blocksRows, threadsRows>>> (d_Buf, d_Src, width, height, krnSize);
+    sepFilterRowsf4 <<<blocksRows, threadsRows>>> (d_Buf, d_Src, width, height, krnSize, pitch);
     cudaError_t error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -248,7 +246,7 @@ void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int hei
         printf("CUDA Error: %s\n", cudaGetErrorString(error));
 
     }
-    sepFilterColsf4 <<<blocksCols, threadsCols>>> (d_Out, d_Buf, width, height, krnSize);
+    sepFilterColsf4 <<<blocksCols, threadsCols>>> (d_Out, d_Buf, width, height, krnSize, pitch);
 
     cudaGetLastError();
     if (error != cudaSuccess)
