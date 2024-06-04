@@ -67,31 +67,35 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp,
                                float4* d_Out, int width, int height,
                                int k, size_t inpPitch, size_t bufPitch, size_t outPitch)
 {
-    // TODO: make d_Out a float2, then process on the cpu?
-    int i = threadIdx.x + blockIdx.x * blockDim.x;
-    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
 
-    if (i >= height || j >= width)
+    if (y >= height || x >= width)
         return;
 
-    uint8_t* d_InpRow = d_Inp + i * inpPitch;
-    uint8_t px = d_InpRow[j];
+    uint8_t* d_InpRow = d_Inp + y * inpPitch;
+    uint8_t px = d_InpRow[x];
 
-    float4* d_OutNonSummedRow = (float4*)((char*) d_OutNonSummed + i * bufPitch);
-    float4 tmp = d_OutNonSummedRow[j];
+    float4* d_OutNonSummedRow = (float4*)((char*) d_OutNonSummed + y * bufPitch);
+    float4 tmp = d_OutNonSummedRow[x];
 
-    float4* d_OutRow = (float4*) ((char*)d_Out + i * outPitch);
-    float4 oldOut = d_OutRow[j];
+    float4* d_OutRow = (float4*) ((char*)d_Out + y * outPitch);
+    float4 oldOut = d_OutRow[x];
 
     float4 out;
     float2 sinCosVals = d_trigLut[px][k];
 
-    out.x = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.x, oldOut.x);
-    out.y = __fmaf_rn(d_Coefs[k], sinCosVals.y * tmp.y, oldOut.y);
-    out.z = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.z, oldOut.z);
-    out.w = __fmaf_rn(d_Coefs[k], sinCosVals.y * tmp.w, oldOut.z);
+    float outX = __fmul_rn(sinCosVals.x, tmp.x);
+    float outY = __fmul_rn(sinCosVals.y, tmp.y);
+    float outZ = __fmul_rn(sinCosVals.x, tmp.z);
+    float outW = __fmul_rn(sinCosVals.y, tmp.w);
 
-    d_OutRow[j] = out;
+    out.x = __fmaf_rn(d_Coefs[k], outX, oldOut.x);
+    out.y = __fmaf_rn(d_Coefs[k], outY, oldOut.y);
+    out.z = __fmaf_rn(d_Coefs[k], outZ, oldOut.z);
+    out.w = __fmaf_rn(d_Coefs[k], outW, oldOut.z);
+
+    d_OutRow[x] = out;
 }
 
 __global__ void obtainFinalImage(float4* d_OutSummed,
@@ -252,7 +256,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 //                                     cudaMemcpyDeviceToHost));
 //        debugOutBuf(h_BfBuf, input.rows, input.cols);
 
-        collectResults<<<populateBlocks, populateThreads>>>(d_OutNonSummed,
+        collectResults<<<finalBlocks, finalThreads>>>(d_OutNonSummed,
                                                             d_Inp, d_OutSummed,
                                                             width, height,
                                                             i, uint8Pitch,
