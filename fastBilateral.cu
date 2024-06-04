@@ -63,7 +63,9 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
 
 }
 
-__global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_Out, int width, int height, int k, size_t inpPitch, size_t bufPitch, size_t outPitch)
+__global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp,
+                               float2* d_Out, int width, int height,
+                               int k, size_t inpPitch, size_t bufPitch, size_t outPitch)
 {
     // TODO: make d_Out a float2, then process on the cpu?
     int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -76,10 +78,12 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_
     float W = 0; // normalization factor
 
     uint8_t* d_InpRow = d_Inp + i * inpPitch;
-    uint8_t px = d_Inp[j];
+    uint8_t px = d_InpRow[j];
 
     float4* d_OutNonSummedRow = (float4*)((char*) d_OutNonSummed + i * bufPitch);
     float4 tmp = d_OutNonSummedRow[j];
+    sum = tmp.x;
+    W = tmp.y;
     float2 sinCosVals = d_trigLut[px][k];
 
     // PSNR 51.7611 dB
@@ -90,8 +94,26 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp, float* d_
     W = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.x + sinCosVals.y * tmp.y, W);
     sum = __fmaf_rn(d_Coefs[k], sinCosVals.x * tmp.z + sinCosVals.y * tmp.w, sum);
 
+    float2* d_OutRow = (float2*) ((char*)d_Out + i * outPitch);
+    d_OutRow[j] = make_float2(sum, W);
+}
+
+__global__ void obtainFinalImage(float2* d_OutSummed,
+                               float* d_Out, int width, int height,
+                               size_t inpPitch, size_t outPitch)
+{
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (i >= height || j >= width)
+        return;
+
+
+    float2* d_OutSummedRow = (float2*) ((char*)d_OutSummed + i * inpPitch);
+    float2 tmp = d_OutSummedRow[j];
+
     float* d_OutRow = (float*) ((char*)d_Out + i * outPitch);
-    d_OutRow[j] = sum / W;
+    d_OutRow[j] = tmp.x / tmp.y;
 }
 
 void debugOutBuf(float4* h_BfBuf, int rows, int cols)
@@ -158,15 +180,20 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     // Allocate arrays for intermediate images
 
     int frameSize = input.rows * input.cols;
-    size_t uint8Pitch, floatPitch, float4Pitch;
+
+    size_t uint8Pitch, floatPitch, float2Pitch, float4Pitch;
 
     uint8_t* d_Inp;
     checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,
                                     input.cols * sizeof(uint8_t), input.rows));
 
-    float* d_OutSummed;
-    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &floatPitch,
-                                    input.cols * sizeof(float), input.rows));
+    float2* d_OutSummed;
+    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float2Pitch,
+                                    input.cols * sizeof(float2), input.rows));
+
+    float* d_Out;
+    checkCudaErrors(cudaMallocPitch(&d_Out, &floatPitch,
+                                    input.cols * sizeof(float2), input.rows));
 
     float4* d_BfBuf;
 //    checkCudaErrors(cudaMalloc(&d_BfBuf, frameSize * numberOfCoefficients * sizeof(float4)));
@@ -228,9 +255,15 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 //        debugOutBuf(h_BfBuf, input.rows, input.cols);
 
         collectResults<<<populateBlocks, populateThreads>>>(d_OutNonSummed,
-                                                            d_Inp, d_OutSummed, width, height, i, uint8Pitch, float4Pitch, floatPitch);
+                                                            d_Inp, d_OutSummed,
+                                                            width, height,
+                                                            i, uint8Pitch,
+                                                            float4Pitch, float2Pitch);
 
     }
+
+    obtainFinalImage<<<populateBlocks, populateThreads>>>(d_OutSummed, d_Out, width, height, float2Pitch, floatPitch);
+
     cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
     cudaEventSynchronize(finish);
     cudaEventElapsedTime(&elapsedTime, start, finish);
@@ -256,6 +289,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     cudaFree(d_OutNonSummed);
     cudaFree(d_BfBuf);
     cudaFree(d_OutNonSummedBuf);
+    cudaFree(d_Out);
     return;
 
 }
