@@ -64,4 +64,7 @@ inline void __printLastCudaError(const char *errorMessage, const char *file,
     }
 }
 
+
+dim3 computeNumWorkGroups(const dim3& workGroupSize, int width, int height);
+
 #endif //CUDA_BF_UTILS_CUH

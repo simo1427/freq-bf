@@ -6,8 +6,8 @@
 #include "utils.cuh"
 #include "spatial/separableConvolution.cuh"
 
-#define BF_POPULATE_WIDTH 128
-#define BF_POPULATE_HEIGHT 2
+#define BF_POPULATE_WIDTH 64
+#define BF_POPULATE_HEIGHT 4
 
 #define BF_COLLECT_WIDTH 32
 #define BF_COLLECT_HEIGHT 8
@@ -226,11 +226,12 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     // execute kernels
 
     dim3 populateThreads(BF_POPULATE_WIDTH, BF_POPULATE_HEIGHT);
-    dim3 populateBlocks(width / populateThreads.y + (width % populateThreads.y ? 1 : 0), height / populateThreads.x + (height % populateThreads.x ? 1 : 0));
+    //dim3 populateBlocks(width / populateThreads.x + (width % populateThreads.x ? 1 : 0), height / populateThreads.y + (height % populateThreads.y ? 1 : 0));
+    dim3 populateBlocks = computeNumWorkGroups(populateThreads, width, height);
 
     dim3 finalThreads(BF_COLLECT_WIDTH, BF_COLLECT_HEIGHT);
-    dim3 finalBlocks(width / populateThreads.y + (width % populateThreads.y ? 1 : 0), height / populateThreads.x + (height % populateThreads.x ? 1 : 0));
-
+    //dim3 finalBlocks(width / finalThreads.x + (width % finalThreads.x ? 1 : 0), height / finalThreads.y + (height % finalThreads.y ? 1 : 0));
+    dim3 finalBlocks = computeNumWorkGroups(finalThreads, width, height);
 
     // for debug image output
     float4* h_BfBuf = (float4*) malloc(frameSize * sizeof(float4));
@@ -253,11 +254,11 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                     spatialKernel.rows,
                     float4Pitch);
 
-//        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
-//                                     d_OutNonSummed, float4Pitch,
-//                                     input.cols * sizeof(float4), input.rows,
-//                                     cudaMemcpyDeviceToHost));
-//        debugOutBuf(h_BfBuf, input.rows, input.cols);
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_BfBuf, float4Pitch,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols);
 
         collectResults<<<finalBlocks, finalThreads>>>(d_OutNonSummed,
                                                             d_Inp, d_OutSummed,

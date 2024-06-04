@@ -1,4 +1,5 @@
 #include "separableConvolution.cuh"
+#include "utils.cuh"
 
 #include "cuda_math.h"
 #include <cuda.h>
@@ -78,10 +79,6 @@ __global__ void sepFilterVerticalF4(float4* d_Out, float4* d_Src, int width, int
     d_Out[address] = sum;
 }
 
-dim3 computeNumWorkGroups(const dim3& workGroupSize, int width, int height)
-{
-    return dim3((width + workGroupSize.x - 1) / workGroupSize.x, (height + workGroupSize.y - 1) / workGroupSize.y, 1);
-}
 void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int height, int krnSize, size_t pitchInBytes)
 {
     // TODO: take stream as a param?
