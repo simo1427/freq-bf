@@ -6,8 +6,8 @@
 #include "utils.cuh"
 #include "spatial/separableConvolution.cuh"
 
-#define BF_POPULATE_WIDTH 32
-#define BF_POPULATE_HEIGHT 16
+#define BF_POPULATE_WIDTH 128
+#define BF_POPULATE_HEIGHT 2
 
 #define BF_COLLECT_WIDTH 32
 #define BF_COLLECT_HEIGHT 8
@@ -42,16 +42,16 @@ void populateLut(int numberOfCoefficients, float T)
 
 __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int height, int k, size_t srcPitch, size_t bufPitch)
 {
-    int i = threadIdx.x + blockIdx.x * blockDim.x;
-    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
 
-    if (i >= height || j >= width)
+    if (y >= height || x >= width)
         return;
 
     // TODO: shared memory? maybe first pitched memory, then shared...
-    uint8_t* d_InpRow = d_Inp + i * srcPitch;
+    uint8_t* d_InpRow = d_Inp + y * srcPitch;
 
-    uint8_t px = d_InpRow[j];
+    uint8_t px = d_InpRow[x];
     // TODO: the trick for accessing many uint8_t's at the same time? I saw that recently in an NVIDIA presentation
 
     float pxScaled = static_cast<float>(px) / 255.0f;
@@ -61,8 +61,8 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
     float2 vals = d_trigLut[px][k];
     float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
 
-    float4* d_BufRow = (float4*) ((char*) d_Buf + i * bufPitch);
-    d_BufRow[j] = tmp;
+    float4* d_BufRow = (float4*) ((char*) d_Buf + y * bufPitch);
+    d_BufRow[x] = tmp;
 
 }
 
@@ -225,8 +225,8 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     // execute kernels
 
-    dim3 populateThreads(BF_POPULATE_HEIGHT, BF_POPULATE_WIDTH);
-    dim3 populateBlocks(height / populateThreads.x + (height % populateThreads.x ? 1 : 0), width / populateThreads.y + (width % populateThreads.y ? 1 : 0));
+    dim3 populateThreads(BF_POPULATE_WIDTH, BF_POPULATE_HEIGHT);
+    dim3 populateBlocks(width / populateThreads.y + (width % populateThreads.y ? 1 : 0), height / populateThreads.x + (height % populateThreads.x ? 1 : 0));
 
     dim3 finalThreads(BF_COLLECT_WIDTH, BF_COLLECT_HEIGHT);
     dim3 finalBlocks(width / populateThreads.y + (width % populateThreads.y ? 1 : 0), height / populateThreads.x + (height % populateThreads.x ? 1 : 0));
