@@ -4,10 +4,12 @@ project(cuda_bf CUDA CXX)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(cuda_bf main.cu utils.cu utils.cuh spatial/separableConvolution.cu spatial/separableConvolution.cuh rangeKernels.h rangeKernels.cpp refBilateral.h refBilateral.cpp)
+add_executable(cuda_bf main.cu utils.cu utils.cuh spatial/separableConvolution.cu spatial/separableConvolution.cuh rangeKernels.h rangeKernels.cpp refBilateral.h refBilateral.cpp fastBilateral.cu fastBilateral.cuh)
 
 set_target_properties(cuda_bf PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 
 find_package(OpenCV REQUIRED )
 find_package(GSL REQUIRED )

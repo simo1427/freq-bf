@@ -64,8 +64,7 @@ rangeKrnProvider(std::string& name) {
     return gaussian; // the default
 }
 
-std::vector<double>
-getFourierCoefficients(double sigmaRange, double T, int numberOfCoefficients, range_krn_t rangeKrn) {
+std::vector<double> getFourierCoefficients(double sigmaRange, double T, int numberOfCoefficients, range_krn_t rangeKrn) {
 
     std::vector<double> ret = std::vector<double>();
 
