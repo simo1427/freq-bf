@@ -9,6 +9,9 @@
 #define BF_POPULATE_WIDTH 32
 #define BF_POPULATE_HEIGHT 16
 
+#define BF_COLLECT_WIDTH 32
+#define BF_COLLECT_HEIGHT 8
+
 
 #define MAX_COEFS_NUM 20 // TODO: check for a better value, possibly derived from the amount of VRAM
 
@@ -225,7 +228,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     dim3 populateThreads(BF_POPULATE_HEIGHT, BF_POPULATE_WIDTH);
     dim3 populateBlocks(height / populateThreads.x + (height % populateThreads.x ? 1 : 0), width / populateThreads.y + (width % populateThreads.y ? 1 : 0));
 
-    dim3 finalThreads(BF_POPULATE_WIDTH, BF_POPULATE_HEIGHT);
+    dim3 finalThreads(BF_COLLECT_WIDTH, BF_COLLECT_HEIGHT);
     dim3 finalBlocks(width / populateThreads.y + (width % populateThreads.y ? 1 : 0), height / populateThreads.x + (height % populateThreads.x ? 1 : 0));
 
 
