@@ -98,18 +98,20 @@ __global__ void obtainFinalImage(float4* d_OutSummed,
                                float* d_Out, int width, int height,
                                size_t inpPitch, size_t outPitch)
 {
-    int i = threadIdx.x + blockIdx.x * blockDim.x;
-    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
 
-    if (i >= height || j >= width)
+    if (y >= height || x >= width)
         return;
 
 
-    float4* d_OutSummedRow = (float4*) ((char*)d_OutSummed + i * inpPitch);
-    float4 tmp = d_OutSummedRow[j];
+    float4* d_OutSummedRow = (float4*) ((char*)d_OutSummed + y * inpPitch);
+    float4 tmp = d_OutSummedRow[x];
 
-    float* d_OutRow = (float*) ((char*)d_Out + i * outPitch);
-    d_OutRow[j] = (tmp.w + tmp.z) / (tmp.x + tmp.y);// ;
+    float* d_OutRow = (float*) ((char*)d_Out + y * outPitch);
+    float sum = __fadd_rn(tmp.w, tmp.z);
+    float W = __fadd_rn(tmp.x, tmp.y);
+    d_OutRow[x] = __fdiv_rn(sum, W);
 }
 
 void debugOutBuf(float4* h_BfBuf, int rows, int cols)
@@ -219,6 +221,10 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     dim3 populateThreads(BF_POPULATE_HEIGHT, BF_POPULATE_WIDTH);
     dim3 populateBlocks(height / populateThreads.x + (height % populateThreads.x ? 1 : 0), width / populateThreads.y + (width % populateThreads.y ? 1 : 0));
 
+    dim3 finalThreads(BF_POPULATE_WIDTH, BF_POPULATE_HEIGHT);
+    dim3 finalBlocks(width / populateThreads.y + (width % populateThreads.y ? 1 : 0), height / populateThreads.x + (height % populateThreads.x ? 1 : 0));
+
+
     // for debug image output
     float4* h_BfBuf = (float4*) malloc(frameSize * sizeof(float4));
 
@@ -254,7 +260,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     }
 
-    obtainFinalImage<<<populateBlocks, populateThreads>>>(d_OutSummed, d_Out, width, height, float4Pitch, floatPitch);
+    obtainFinalImage<<<finalBlocks, finalThreads>>>(d_OutSummed, d_Out, width, height, float4Pitch, floatPitch);
 
     cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
     cudaEventSynchronize(finish);
