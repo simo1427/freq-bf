@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
 
     cv::imwrite("./gpuOut.tif", filterOut);
 
-
+#ifdef PSNR_OUT
     // Measure PSNR compared with CPU slow BF
     auto bfGold = cv::Mat(frame.rows, frame.cols, CV_32F);
 //
@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
     cv::imwrite("./slow.tif", bfGold);
     cv::imwrite("./diff.tif", diff);
 
+#endif
 //    cv::waitKey(0);
     // Deallocate
 //

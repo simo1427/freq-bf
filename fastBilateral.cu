@@ -6,8 +6,8 @@
 #include "utils.cuh"
 #include "spatial/separableConvolution.cuh"
 
-#define BF_POPULATE_WIDTH 64
-#define BF_POPULATE_HEIGHT 4
+#define BF_POPULATE_WIDTH 32
+#define BF_POPULATE_HEIGHT 8
 
 #define BF_COLLECT_WIDTH 32
 #define BF_COLLECT_HEIGHT 8
@@ -254,11 +254,11 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                     spatialKernel.rows,
                     float4Pitch);
 
-        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
-                                     d_BfBuf, float4Pitch,
-                                     input.cols * sizeof(float4), input.rows,
-                                     cudaMemcpyDeviceToHost));
-        debugOutBuf(h_BfBuf, input.rows, input.cols);
+//        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+//                                     d_BfBuf, float4Pitch,
+//                                     input.cols * sizeof(float4), input.rows,
+//                                     cudaMemcpyDeviceToHost));
+//        debugOutBuf(h_BfBuf, input.rows, input.cols);
 
         collectResults<<<finalBlocks, finalThreads>>>(d_OutNonSummed,
                                                             d_Inp, d_OutSummed,
