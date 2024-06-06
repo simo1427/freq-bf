@@ -96,7 +96,7 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp,
     out.x = __fmaf_rn(d_Coefs[k], outX, oldOut.x);
     out.y = __fmaf_rn(d_Coefs[k], outY, oldOut.y);
     out.z = __fmaf_rn(d_Coefs[k], outZ, oldOut.z);
-    out.w = __fmaf_rn(d_Coefs[k], outW, oldOut.z);
+    out.w = __fmaf_rn(d_Coefs[k], outW, oldOut.w);
 
     d_OutRow[x] = out;
 }
@@ -121,10 +121,10 @@ __global__ void obtainFinalImage(float4* d_OutSummed,
     d_OutRow[x] = __fdiv_rn(sum, W);
 }
 
-void debugOutBuf(float4* h_BfBuf, int rows, int cols)
+void debugOutBuf(float4* h_BfBuf, int rows, int cols, std::string prefix)
 {
     cv::Mat dbgOut = cv::Mat(rows, cols, CV_32F);
-    std::string filenames[] = {"./cosImg.tif", "./sinImg.tif", "./cosIntensityImg.tif", "./sinIntensityImg.tif"};
+    std::string filenames[] = {"cosImg.tif", "sinImg.tif", "cosIntensityImg.tif", "sinIntensityImg.tif"};
 
     for (int k = 0; k < 4; k++)
     {
@@ -144,7 +144,7 @@ void debugOutBuf(float4* h_BfBuf, int rows, int cols)
             }
         }
 
-        cv::imwrite(filenames[k], dbgOut);
+        cv::imwrite(prefix + filenames[k], dbgOut);
 
     }
 
@@ -160,7 +160,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     if (numberOfCoefficients == 0)
         // modified heuristic compared to Honours project
-        numberOfCoefficients =(int)ceil(1.5 * 2 / (6 * sigmaRange)) + 1;
+        numberOfCoefficients =(int)ceil(4 * 2 / (6 * sigmaRange)) + 1;
 
     auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
     std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
@@ -236,7 +236,6 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     // for debug image output
     float4* h_BfBuf = (float4*) malloc(frameSize * sizeof(float4));
 
-//    printf("Number of coefficients: %d\n", numberOfCoefficients);
     cudaEventRecord(start, 0);
 
 
@@ -254,18 +253,32 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                     spatialKernel.rows,
                     float4Pitch);
 
-//        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
-//                                     d_BfBuf, float4Pitch,
-//                                     input.cols * sizeof(float4), input.rows,
-//                                     cudaMemcpyDeviceToHost));
-//        debugOutBuf(h_BfBuf, input.rows, input.cols);
+#ifdef SEPCONV_COPY_INTERMEDIATE
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_BfBuf, float4Pitch,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-unfiltered-{}-", i));
 
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_OutNonSummed, float4Pitch,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-filtered-{}-", i));
+#endif
         collectResults<<<finalBlocks, finalThreads>>>(d_OutNonSummed,
                                                             d_Inp, d_OutSummed,
                                                             width, height,
                                                             i, uint8Pitch,
                                                             float4Pitch, float4Pitch);
 
+#ifdef SEPCONV_COPY_INTERMEDIATE
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_OutSummed, float4Pitch,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-accum-{}-", i));
+#endif
     }
 
     obtainFinalImage<<<finalBlocks, finalThreads>>>(d_OutSummed, d_Out, width, height, float4Pitch, floatPitch);
@@ -275,8 +288,6 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     cudaEventElapsedTime(&elapsedTime, start, finish);
     // copy result back from the GPU
 
-
-//    checkCudaErrors(cudaMemcpy(output.ptr<float>(), d_OutSummed, frameSize * sizeof(float), cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy2D(output.ptr<float>(), input.cols * sizeof(float),
                                  d_Out, floatPitch,
                                  input.cols * sizeof(float), input.rows,
