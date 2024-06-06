@@ -86,10 +86,11 @@ int main(int argc, char** argv) {
     cv::Mat diff = bfGold - filterOut;
 
     float mse = 0;
+    int hks = kernel.rows / 2;
 
-    for (int i = 0; i < diff.rows ; i++) {
+    for (int i = hks; i < diff.rows - hks ; i++) {
         float* errPtr = diff.ptr<float>(i);
-        for (int j = 0; j < diff.cols; j++) {
+        for (int j = hks; j < diff.cols - hks; j++) {
             mse += errPtr[j] * errPtr[j];
         }
     }
