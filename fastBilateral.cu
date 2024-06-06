@@ -25,15 +25,17 @@ void setCoefficients(float* h_Coefs, int n)
     cudaMemcpyToSymbol(d_Coefs, h_Coefs, n);
 }
 
+constexpr double uint8ToFloatScale = 1.0 / 255;
 void populateLut(int numberOfCoefficients, float T)
 {
     float2 h_trigLut[256][MAX_COEFS_NUM];
     for (int k = 0; k < numberOfCoefficients; k++)
     {
+        float frequency = 2 * M_PI * k / T;
         for (int j = 0; j < 256; j++)
         {
-            h_trigLut[j][k].x = cosf(static_cast<float>(j / 255.0f) * 2.0f * M_PI * k / T);
-            h_trigLut[j][k].y = sinf(static_cast<float>(j / 255.0f) * 2.0f * M_PI * k / T);
+            h_trigLut[j][k].x = cos(j * uint8ToFloatScale * frequency);
+            h_trigLut[j][k].y = sin(j * uint8ToFloatScale * frequency);
         }
     }
 
