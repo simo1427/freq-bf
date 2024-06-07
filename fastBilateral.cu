@@ -21,7 +21,7 @@
 
 
 __constant__ float d_Coefs[MAX_COEFS_NUM];
-__constant__ float2 d_trigLut[256][MAX_COEFS_NUM];
+__constant__ float2 d_trigLut[MAX_COEFS_NUM][256];
 // TODO: is this an efficient memory layout?
 // shouldn't be a problem, as constant memory should take care of that according to the CUDA C++ Programming Guide
 
@@ -33,14 +33,14 @@ void setCoefficients(float* h_Coefs, int n)
 constexpr double uint8ToFloatScale = 1.0 / 255;
 void populateLut(int numberOfCoefficients, float T)
 {
-    float2 h_trigLut[256][MAX_COEFS_NUM];
+    float2 h_trigLut[MAX_COEFS_NUM][256];
     for (int k = 0; k < numberOfCoefficients; k++)
     {
         float frequency = 2 * M_PI * k / T;
         for (int j = 0; j < 256; j++)
         {
-            h_trigLut[j][k].x = cos(j * uint8ToFloatScale * frequency);
-            h_trigLut[j][k].y = sin(j * uint8ToFloatScale * frequency);
+            h_trigLut[k][j].x = cos(j * uint8ToFloatScale * frequency);
+            h_trigLut[k][j].y = sin(j * uint8ToFloatScale * frequency);
         }
     }
 
@@ -65,7 +65,7 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
 
     // order: x:cos y:sin z:cosIntensity w:sinIntensity
 
-    float2 vals = d_trigLut[px][k];
+    float2 vals = d_trigLut[k][px];
     float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
 
     float4* d_BufRow = (float4*) ((char*) d_Buf + y * bufPitch);
@@ -93,7 +93,7 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp,
     float4 oldOut = d_OutRow[x];
 
     float4 out;
-    float2 sinCosVals = d_trigLut[px][k];
+    float2 sinCosVals = d_trigLut[k][px];
 
     float outX = __fmul_rn(sinCosVals.x, tmp.x);
     float outY = __fmul_rn(sinCosVals.y, tmp.y);
@@ -167,7 +167,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     if (numberOfCoefficients == 0)
         // modified heuristic compared to Honours project
-        numberOfCoefficients =(int)ceil(4 * 2 / (6 * sigmaRange)) + 1;
+        numberOfCoefficients =(int)ceil(1.5 * 2 / (6 * sigmaRange)) + 1;
 
     auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
     std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};

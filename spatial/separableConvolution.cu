@@ -18,7 +18,7 @@
 
 __constant__ float d_Krn[MAX_KS];
 
-extern __constant__ float2 d_trigLut[256][MAX_COEFS_NUM];
+extern __constant__ float2 d_trigLut[MAX_COEFS_NUM][256];
 extern __constant__ float d_Coefs[MAX_COEFS_NUM];
 
 void setConvolutionKernel(float* h_Krn, int krnSize)
@@ -123,7 +123,7 @@ __global__ void sepFilterHorizontalAccF4(float4* d_Out, float4* d_Src, uint8_t* 
 
     const int origAddress = toAddress(x, y, origPitch);
     uint8_t px = d_Orig[origAddress];
-    float2 sinCosVals = d_trigLut[px][k];
+    float2 sinCosVals = d_trigLut[k][px];
 
     int hks = krnSize / 2;
     float4 sum = make_float4(0, 0, 0, 0);
