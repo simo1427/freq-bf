@@ -13,6 +13,11 @@
 #define IMAGE_PATCH_ROWS_WIDTH 512
 #define IMAGE_PATCH_ROWS_HEIGHT 2
 
+#define ACC_HORI_WIDTH 128
+#define ACC_HORI_HEIGHT 1
+#define ACC_VERT_WIDTH 32
+#define ACC_VERT_HEIGHT 16
+
 #define MAX_KS 64
 #define MAX_HKS 32
 
@@ -154,8 +159,8 @@ __global__ void sepFilterHorizontalAccF4(float4* d_Out, float4* d_Src, uint8_t* 
 void sepFilterAccF4(float4* d_Out, float4* d_Src, float4* d_Buf, uint8_t* d_Orig, int width, int height, int krnSize, int k, size_t pitchInBytes, size_t origPitchInBytes)
 {
     // TODO: take stream as a param?
-    const dim3 verticalWorkGroupSize { 32, 16 };
-    const dim3 horizontalWorkGroupSize { 128, 1 };
+    const dim3 verticalWorkGroupSize { ACC_VERT_WIDTH, ACC_VERT_HEIGHT };
+    const dim3 horizontalWorkGroupSize { ACC_HORI_WIDTH, ACC_HORI_HEIGHT };
     const dim3 verticalWorkGroups = computeNumWorkGroups(verticalWorkGroupSize, width, height);
     const dim3 horizontalWorkGroups = computeNumWorkGroups(horizontalWorkGroupSize, width, height);
     const float pitch = pitchInBytes / sizeof(float4);
