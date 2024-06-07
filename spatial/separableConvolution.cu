@@ -1,5 +1,6 @@
 #include "separableConvolution.cuh"
 #include "utils.cuh"
+#include "fastBilateral.cuh"
 
 #include "cuda_math.h"
 #include <cuda.h>
@@ -17,6 +18,9 @@
 
 __constant__ float d_Krn[MAX_KS];
 
+extern __constant__ float2 d_trigLut[256][MAX_COEFS_NUM];
+extern __constant__ float d_Coefs[MAX_COEFS_NUM];
+
 void setConvolutionKernel(float* h_Krn, int krnSize)
 {
     cudaMemcpyToSymbol(d_Krn, h_Krn, krnSize * sizeof(float));
@@ -26,6 +30,7 @@ __device__ int toAddress(int x, int y, int width)
 {
     return y * width + x;
 }
+//-------------- sepFilterF4 without accumulation --------------//
 
 __global__ void sepFilterHorizontalF4(float4* d_Out, float4* d_Src, int width, int height, int krnSize, size_t pitch)
 {
@@ -104,6 +109,76 @@ void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int hei
         printf("CUDA Error: %s\n", cudaGetErrorString(error));
     }
 }
+
+
+//--------------- sepFilterF4 with accumulation ----------------//
+
+__global__ void sepFilterHorizontalAccF4(float4* d_Out, float4* d_Src, uint8_t* d_Orig, int width, int height, int krnSize, int k, size_t pitch, size_t origPitch)
+{
+    const unsigned x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    const int origAddress = toAddress(x, y, origPitch);
+    uint8_t px = d_Orig[origAddress];
+    float2 sinCosVals = d_trigLut[px][k];
+
+    int hks = krnSize / 2;
+    float4 sum = make_float4(0, 0, 0, 0);
+    for (int krnI = -hks; krnI <= hks; krnI++) {
+        int neighbourX = x + krnI;
+        if (neighbourX < 0)
+            neighbourX = -neighbourX;
+        else if (neighbourX >= width)
+            neighbourX = 2 * width - neighbourX - 2;
+
+        const int neighbourAddress = toAddress(neighbourX, y, pitch);
+        const float spatialCoef = d_Krn[hks + krnI];
+        sum = sum + make_float4(spatialCoef) * d_Src[neighbourAddress];
+    }
+
+    const int address = toAddress(x, y, pitch); // Accumulate to the global buffer
+    float4 tmp = d_Out[address];
+
+
+
+    tmp = tmp + make_float4(d_Coefs[k]) * make_float4(sinCosVals.x * sum.x,
+                                                      sinCosVals.y * sum.y,
+                                                      sinCosVals.x * sum.z,
+                                                      sinCosVals.y * sum.w);
+    d_Out[address] = tmp;
+}
+
+void sepFilterAccF4(float4* d_Out, float4* d_Src, float4* d_Buf, uint8_t* d_Orig, int width, int height, int krnSize, int k, size_t pitchInBytes, size_t origPitchInBytes)
+{
+    // TODO: take stream as a param?
+    const dim3 verticalWorkGroupSize { 32, 16 };
+    const dim3 horizontalWorkGroupSize { 128, 1 };
+    const dim3 verticalWorkGroups = computeNumWorkGroups(verticalWorkGroupSize, width, height);
+    const dim3 horizontalWorkGroups = computeNumWorkGroups(horizontalWorkGroupSize, width, height);
+    const float pitch = pitchInBytes / sizeof(float4);
+    const size_t origPitch = origPitchInBytes / sizeof(uint8_t);
+
+    sepFilterVerticalF4<<<verticalWorkGroups, verticalWorkGroupSize>>>(d_Buf, d_Src, width, height, krnSize, pitch);
+    cudaDeviceSynchronize();
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess) { // something's gone wrong
+        // print out the CUDA error as a string
+        printf("CUDA Error: %s\n", cudaGetErrorString(error));
+    }
+    sepFilterHorizontalAccF4<<<horizontalWorkGroups, horizontalWorkGroupSize>>>(d_Out, d_Buf, d_Orig, width, height, krnSize, k, pitch, origPitch);
+    cudaDeviceSynchronize();
+    cudaGetLastError();
+    if (error != cudaSuccess) {
+        // something's gone wrong
+        // print out the CUDA error as a string
+        printf("CUDA Error: %s\n", cudaGetErrorString(error));
+    }
+}
+
+//---------------- sepFilter with accumulation -----------------//
 
 __global__ void sepFilterRows(float* d_Out, float* d_Src, int width, int height, int krnSize, size_t pitch)
 {

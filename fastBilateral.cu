@@ -16,6 +16,8 @@
 #define NUM_OF_RUNS 150
 //#define SEPCONV_COPY_INTERMEDIATE
 
+#define SEPCONV_ACC
+
 
 
 __constant__ float d_Coefs[MAX_COEFS_NUM];
@@ -200,6 +202,10 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     float4* d_OutSummed;
     checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float4Pitch,
                                     input.cols * sizeof(float4), input.rows));
+#ifdef SEPCONV_ACC
+    // zero-initialize
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4Pitch, 0.0f, input.cols * sizeof(float4), input.rows));
+#endif
 
     float* d_Out;
     checkCudaErrors(cudaMallocPitch(&d_Out, &floatPitch,
@@ -257,7 +263,9 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
         fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp,d_BfBuf,
                                                             width, height,
                                                             i, uint8Pitch, float4Pitch);
-
+#ifdef SEPCONV_ACC
+        sepFilterAccF4(d_OutSummed, d_BfBuf, d_OutNonSummedBuf, d_Inp, width, height, spatialKernel.rows, i, float4Pitch, uint8Pitch);
+#else
         sepFilterf4(d_OutNonSummed,
                     d_BfBuf,
                     d_OutNonSummedBuf,
@@ -265,6 +273,8 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                     height,
                     spatialKernel.rows,
                     float4Pitch);
+#endif
+
 
 #ifdef SEPCONV_COPY_INTERMEDIATE
         checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
@@ -279,11 +289,14 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                                      cudaMemcpyDeviceToHost));
         debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-filtered-{}-", i));
 #endif
+
+#ifndef SEPCONV_ACC
         collectResults<<<finalBlocks, finalThreads>>>(d_OutNonSummed,
                                                             d_Inp, d_OutSummed,
                                                             width, height,
                                                             i, uint8Pitch,
                                                             float4Pitch, float4Pitch);
+#endif
 
 #ifdef SEPCONV_COPY_INTERMEDIATE
         checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
