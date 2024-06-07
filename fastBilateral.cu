@@ -12,8 +12,11 @@
 #define BF_COLLECT_WIDTH 32
 #define BF_COLLECT_HEIGHT 8
 
+//#define MULTI_RUNS
+#define NUM_OF_RUNS 150
+//#define SEPCONV_COPY_INTERMEDIATE
 
-#define MAX_COEFS_NUM 20 // TODO: check for a better value, possibly derived from the amount of VRAM
+
 
 __constant__ float d_Coefs[MAX_COEFS_NUM];
 __constant__ float2 d_trigLut[256][MAX_COEFS_NUM];
@@ -222,8 +225,10 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     // create events for measuring execution time
     cudaEvent_t start, finish;
     float elapsedTime;
+#ifndef MULTI_RUNS
     cudaEventCreate(&start);
     cudaEventCreate(&finish);
+#endif
 
     // execute kernels
 
@@ -238,10 +243,16 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     // for debug image output
     float4* h_BfBuf = (float4*) malloc(frameSize * sizeof(float4));
 
+    // TODO: enqueue convolutions for each of the images in memory
+#ifdef MULTI_RUNS
+    std::vector<float> runs(NUM_OF_RUNS);
+    for (int run = 0; run < NUM_OF_RUNS; run++) {
+#endif
+    cudaEventCreate(&start);
+    cudaEventCreate(&finish);
+
     cudaEventRecord(start, 0);
 
-
-    // TODO: enqueue convolutions for each of the images in memory
     for (int i = 0; i < numberOfCoefficients; i++) {
         fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp,d_BfBuf,
                                                             width, height,
@@ -288,6 +299,18 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
     cudaEventSynchronize(finish);
     cudaEventElapsedTime(&elapsedTime, start, finish);
+
+#ifdef MULTI_RUNS
+    runs[run] = elapsedTime;
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(finish);
+
+    // reset the accumulator to zeros
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4Pitch, 0.0f, input.cols * sizeof(float4), input.rows));
+
+    }
+#endif
     // copy result back from the GPU
 
     checkCudaErrors(cudaMemcpy2D(output.ptr<float>(), input.cols * sizeof(float),
@@ -298,11 +321,32 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     free(h_BfBuf);
 
+
+#ifdef MULTI_RUNS
+    printf("Average of %d runs\n", NUM_OF_RUNS);
+    double totalElapsedTime = 0;
+    for (int run = 0; run < NUM_OF_RUNS; run++) {
+        totalElapsedTime += runs[run];
+        printf("%d: %f ms\n", run + 1, runs[run]);
+    }
+    totalElapsedTime /= NUM_OF_RUNS; // [in seconds]
+    printf("Average elapsed time: %f ms\n", totalElapsedTime);
+    double elapsedTimeSec = totalElapsedTime * 1e-3;
+#else
     printf("Elapsed time: %f ms\n", elapsedTime);
+    double elapsedTimeSec = elapsedTime * 1e-3;
+
+#endif
+
+    printf("Throughput: %f MP/s\n", width * height / (elapsedTimeSec * 1e6));
+
+    // divide by 1e6 to get MPx, additionally by 1e3 to get the ms to s
 
     // cleanup
+#ifndef MULTI_RUNS
     cudaEventDestroy(start);
     cudaEventDestroy(finish);
+#endif
     cudaFree(d_Inp);
     cudaFree(d_OutSummed);
     cudaFree(d_OutNonSummed);

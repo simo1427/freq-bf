@@ -8,6 +8,9 @@
 #ifndef CUDA_BF_FASTBILATERAL_CUH
 #define CUDA_BF_FASTBILATERAL_CUH
 
+
+#define MAX_COEFS_NUM 20 // TODO: check for a better value, possibly derived from the amount of VRAM
+
 void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn, int numberOfCoefficients, float T);
 
 #endif //CUDA_BF_FASTBILATERAL_CUH
