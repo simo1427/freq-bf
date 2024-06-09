@@ -171,7 +171,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     if (numberOfCoefficients == 0)
         // modified heuristic compared to Honours project
-        numberOfCoefficients =(int)ceil(1.5 * 2 / (6 * sigmaRange)) + 1;
+        numberOfCoefficients =(int)ceil(1.5 * T / (6 * sigmaRange)) + 1;
 
     auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
     std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
