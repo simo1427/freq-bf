@@ -68,7 +68,7 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
     float2 vals = d_trigLut[k][px];
     float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
 
-    float4* d_BufRow = (float4*) ((char*) d_Buf + y * bufPitch);
+    float4* d_BufRow = d_Buf + y * bufPitch;
     d_BufRow[x] = tmp;
 
 }
@@ -126,6 +126,10 @@ __global__ void obtainFinalImage(float4* d_OutSummed,
     float sum = __fadd_rn(tmp.w, tmp.z);
     float W = __fadd_rn(tmp.x, tmp.y);
     d_OutRow[x] = __fdiv_rn(sum, W);
+//    float unclampedVal = __fdiv_rn(sum, W);
+//    int lowerBound = unclampedVal <= 1.0f;
+//    int upperBound = unclampedVal >= 0.0f;
+//    d_OutRow[x] = lowerBound * upperBound * unclampedVal + lowerBound * 0.0f + upperBound * 1.0f; // attempting some branchless programming
 }
 
 void debugOutBuf(float4* h_BfBuf, int rows, int cols, std::string prefix)
@@ -193,18 +197,18 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     int frameSize = input.rows * input.cols;
 
-    size_t uint8Pitch, floatPitch, float2Pitch, float4Pitch;
+    size_t uint8Pitch, floatPitch, float2Pitch, float4PitchInBytes;
 
     uint8_t* d_Inp;
     checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,
                                     input.cols * sizeof(uint8_t), input.rows));
 
     float4* d_OutSummed;
-    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float4Pitch,
+    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
 #ifdef SEPCONV_ACC
     // zero-initialize
-    checkCudaErrors(cudaMemset2D(d_OutSummed, float4Pitch, 0.0f, input.cols * sizeof(float4), input.rows));
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
 #endif
 
     float* d_Out;
@@ -212,13 +216,13 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                                     input.cols * sizeof(float), input.rows));
 
     float4* d_BfBuf;
-    checkCudaErrors(cudaMallocPitch(&d_BfBuf, &float4Pitch,
+    checkCudaErrors(cudaMallocPitch(&d_BfBuf, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
     float4* d_OutNonSummed;
-    checkCudaErrors(cudaMallocPitch(&d_OutNonSummed, &float4Pitch,
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummed, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
     float4* d_OutNonSummedBuf;
-    checkCudaErrors(cudaMallocPitch(&d_OutNonSummedBuf, &float4Pitch,
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummedBuf, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
 
     // copy the image to the GPU
@@ -228,6 +232,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                                  input.cols * sizeof(uint8_t), input.rows,
                                  cudaMemcpyHostToDevice));
 
+    size_t float4Pitch = float4PitchInBytes / sizeof(float4);
     // create events for measuring execution time
     cudaEvent_t start, finish;
     float elapsedTime;
@@ -260,11 +265,11 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     cudaEventRecord(start, 0);
 
     for (int i = 0; i < numberOfCoefficients; i++) {
-        fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp,d_BfBuf,
+        fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp, d_BfBuf,
                                                             width, height,
                                                             i, uint8Pitch, float4Pitch);
 #ifdef SEPCONV_ACC
-        sepFilterAccF4(d_OutSummed, d_BfBuf, d_OutNonSummedBuf, d_Inp, width, height, spatialKernel.rows, i, float4Pitch, uint8Pitch);
+        sepFilterAccF4(d_OutSummed, d_BfBuf, d_OutNonSummedBuf, d_Inp, width, height, spatialKernel.rows, i, float4PitchInBytes, uint8Pitch);
 #else
         sepFilterf4(d_OutNonSummed,
                     d_BfBuf,
@@ -272,19 +277,19 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                     width,
                     height,
                     spatialKernel.rows,
-                    float4Pitch);
+                    float4PitchInBytes);
 #endif
 
 
 #ifdef SEPCONV_COPY_INTERMEDIATE
         checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
-                                     d_BfBuf, float4Pitch,
+                                     d_BfBuf, float4PitchInBytes,
                                      input.cols * sizeof(float4), input.rows,
                                      cudaMemcpyDeviceToHost));
         debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-unfiltered-{}-", i));
 
         checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
-                                     d_OutNonSummed, float4Pitch,
+                                     d_OutNonSummed, float4PitchInBytes,
                                      input.cols * sizeof(float4), input.rows,
                                      cudaMemcpyDeviceToHost));
         debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-filtered-{}-", i));
@@ -295,19 +300,19 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                                                             d_Inp, d_OutSummed,
                                                             width, height,
                                                             i, uint8Pitch,
-                                                            float4Pitch, float4Pitch);
+                                                            float4PitchInBytes, float4PitchInBytes);
 #endif
 
 #ifdef SEPCONV_COPY_INTERMEDIATE
         checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
-                                     d_OutSummed, float4Pitch,
+                                     d_OutSummed, float4PitchInBytes,
                                      input.cols * sizeof(float4), input.rows,
                                      cudaMemcpyDeviceToHost));
         debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-accum-{}-", i));
 #endif
     }
 
-    obtainFinalImage<<<finalBlocks, finalThreads>>>(d_OutSummed, d_Out, width, height, float4Pitch, floatPitch);
+    obtainFinalImage<<<finalBlocks, finalThreads>>>(d_OutSummed, d_Out, width, height, float4PitchInBytes, floatPitch);
 
     cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
     cudaEventSynchronize(finish);
@@ -320,7 +325,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     cudaEventDestroy(finish);
 
     // reset the accumulator to zeros
-    checkCudaErrors(cudaMemset2D(d_OutSummed, float4Pitch, 0.0f, input.cols * sizeof(float4), input.rows));
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
 
     }
 #endif
