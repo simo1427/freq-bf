@@ -1,8 +1,8 @@
 #include "separableConvolution.cuh"
-#include "utils.cuh"
+#include "utils/cuda_utils.cuh"
 #include "fastBilateral.cuh"
 
-#include "cuda_math.h"
+#include "utils/cuda_math.h"
 #include <cuda.h>
 #include <iostream>
 #include <math_constants.h>

@@ -2,8 +2,8 @@
 // Created by HP on 23/05/2024.
 //
 
-#ifndef CUDA_BF_UTILS_CUH
-#define CUDA_BF_UTILS_CUH
+#ifndef CUDA_BF_CUDA_UTILS_CUH
+#define CUDA_BF_CUDA_UTILS_CUH
 
 #include <device_launch_parameters.h>
 #include <iostream>
@@ -67,4 +67,4 @@ inline void __printLastCudaError(const char *errorMessage, const char *file,
 
 dim3 computeNumWorkGroups(const dim3& workGroupSize, int width, int height);
 
-#endif //CUDA_BF_UTILS_CUH
+#endif //CUDA_BF_CUDA_UTILS_CUH

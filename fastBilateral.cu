@@ -3,7 +3,7 @@
 //
 
 #include "fastBilateral.cuh"
-#include "utils.cuh"
+#include "utils/cuda_utils.cuh"
 #include "spatial/separableConvolution.cuh"
 
 #define BF_POPULATE_WIDTH 32
@@ -18,8 +18,6 @@
 
 #define SEPCONV_ACC
 
-
-
 __constant__ float d_Coefs[MAX_COEFS_NUM];
 __constant__ float2 d_trigLut[MAX_COEFS_NUM][256];
 // TODO: is this an efficient memory layout?
@@ -31,6 +29,7 @@ void setCoefficients(float* h_Coefs, int n)
 }
 
 constexpr double uint8ToFloatScale = 1.0 / 255;
+
 void populateLut(int numberOfCoefficients, float T)
 {
     float2 h_trigLut[MAX_COEFS_NUM][256];
@@ -171,7 +170,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     if (numberOfCoefficients == 0)
         // modified heuristic compared to Honours project
-        numberOfCoefficients =(int)ceil(1.5 * T / (6 * sigmaRange)) + 1;
+        numberOfCoefficients =(int)ceil(3 * T / (6 * sigmaRange)) + 1;
 
     auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
     std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
@@ -197,7 +196,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     int frameSize = input.rows * input.cols;
 
-    size_t uint8Pitch, floatPitch, float2Pitch, float4PitchInBytes;
+    size_t uint8Pitch, floatPitch, float4PitchInBytes;
 
     uint8_t* d_Inp;
     checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,

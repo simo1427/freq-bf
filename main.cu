@@ -2,12 +2,13 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui.hpp>
 
-#include "utils.cuh"
+#include "utils/cuda_utils.cuh"
 #include <CLI/CLI.hpp>
 #include "rangeKernels.h"
 #include "spatial/separableConvolution.cuh"
 #include "fastBilateral.cuh"
 #include "refBilateral.h"
+#include "evaluators/psnrRunner.h"
 //#include <assert.h>
 
 #define PSNR_OUT
@@ -78,6 +79,10 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
+    if (psnrArg->count()) {
+//        runPsnrMeasure(); // TODO: change once the order of arguments is settled
+        exit(EXIT_SUCCESS);
+    }
     rangeKrn = rangeKrnProvider(rangeKrnName);
 
 
@@ -126,23 +131,10 @@ int main(int argc, char** argv) {
     BF(frame, bfGold, kernel2D, sigmaRange, rangeKrn);
 
 //
-    cv::Mat diff = bfGold - filterOut;
+    double psnr = psnrCompute(bfGold, filterOut, spatialKernelSize, true);
+    std::cout << "PSNR: " << psnr << " dB\n";
 
-    float mse = 0;
-    int hks = kernel.rows / 2;
-
-    for (int i = hks; i < diff.rows - hks ; i++) {
-        float* errPtr = diff.ptr<float>(i);
-        for (int j = hks; j < diff.cols - hks; j++) {
-            mse += errPtr[j] * errPtr[j];
-        }
-    }
-
-    mse /= ((diff.rows) * (diff.cols));
-
-    std::cout << "PSNR: " << 10 * log10(1 / mse) << " dB\n";
     cv::imwrite("./slow.tif", bfGold);
-    cv::imwrite("./diff.tif", diff);
 
 #endif
 //    cv::waitKey(0);

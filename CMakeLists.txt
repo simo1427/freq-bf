@@ -3,8 +3,8 @@ project(cuda_bf CUDA CXX)
 
 add_executable(cuda_bf
 	"main.cu"
-	"utils.cu"
-	"utils.cuh"
+	"utils/cuda_utils.cu"
+	"utils/cuda_utils.cuh"
 	"spatial/separableConvolution.cu"
 	"spatial/separableConvolution.cuh"
 	"rangeKernels.h"
@@ -13,7 +13,9 @@ add_executable(cuda_bf
 	"refBilateral.cpp"
 	"fastBilateral.cu"
 	"fastBilateral.cuh"
-	 "cuda_math.h")
+	 "utils/cuda_math.h"
+		evaluators/psnrRunner.cpp
+		evaluators/psnrRunner.h)
 target_include_directories(cuda_bf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_features(cuda_bf PUBLIC cxx_std_20 cuda_std_20)
