@@ -9,6 +9,7 @@
 #include "fastBilateral.cuh"
 #include "refBilateral.h"
 #include "evaluators/psnrRunner.h"
+#include "evaluators/perfRunner.h"
 //#include <assert.h>
 
 #define PSNR_OUT
@@ -120,7 +121,15 @@ int main(int argc, char **argv) {
                            startKernelSize, endKernelSize,
                            kernelName, numberOfCoefficients);
         }
-        exit(EXIT_SUCCESS);
+        return 0;
+    }
+
+    else if(perfArg->count()) {
+        runPerfMeasureFast(intFrame, numberOfRuns,
+                       startSigmaRange, endSigmaRange, numOfVals,
+                       startKernelSize, endKernelSize,
+                       "gaussian", numberOfCoefficients);
+        return 0;
     }
 
     int w = frame.cols; // placeholder width value

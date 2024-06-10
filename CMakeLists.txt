@@ -15,7 +15,9 @@ add_executable(cuda_bf
 	"fastBilateral.cuh"
 	 "utils/cuda_math.h"
 		evaluators/psnrRunner.cpp
-		evaluators/psnrRunner.h)
+		evaluators/psnrRunner.h
+		evaluators/perfRunner.cpp
+		evaluators/perfRunner.h)
 target_include_directories(cuda_bf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_features(cuda_bf PUBLIC cxx_std_20 cuda_std_20)

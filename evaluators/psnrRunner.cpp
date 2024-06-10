@@ -6,7 +6,7 @@
 #include "refBilateral.h"
 #include "fastBilateral.cuh"
 
-const double psnrSaveThreshold = 50.0;
+constexpr double psnrSaveThreshold = 50.0;
 
 double psnrCompute(cv::Mat &ref, cv::Mat &our, int kernelSize, bool writeDiffImg = false) {
     cv::Mat err = ref - our;
@@ -71,7 +71,12 @@ void runPsnrMeasure(cv::Mat image,
     cv::Mat imageF32(image.size[0], image.size[1], CV_32F);
     image.convertTo(imageF32, CV_32F, 1.0 / 255, 0);
 
-    for (sigmaRange = startSigmaRange; sigmaRange <= endSigmaRange; sigmaRange += step) {
+    for (int i = 0; i <= endSigmaRange; i++) {
+        sigmaRange = startSigmaRange + i * step;
+        /*
+         * The number of coefficients is subject to tuning, hence it is additionally calculated here
+         * and passed to subsequent methods
+         */
         int numOfCoefs = numberOfCoefficients == 0 ? (int) ceil(4 * T / (6 * sigmaRange)) + 1 : numberOfCoefficients;
 
         for (spatialKernelSize = startKernelSize; spatialKernelSize <= endKernelSize; spatialKernelSize += 2) {
@@ -82,6 +87,7 @@ void runPsnrMeasure(cv::Mat image,
             std::cout << "sigmaRange= " << sigmaRange << " spatialKernelSize= " << spatialKernelSize << "\n";
 
             // Run the two filters
+
             BF_approx_gpu(image, fastBF, kernel, sigmaRange, rangeKrn, numOfCoefs, T);
             BF(imageF32, slowBFGold, kernel2D, sigmaRange, rangeKrn);
 
