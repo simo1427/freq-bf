@@ -10,6 +10,7 @@
 #include "refBilateral.h"
 #include "evaluators/psnrRunner.h"
 #include "evaluators/perfRunner.h"
+#include "evaluators/sepFilterEval.cuh"
 //#include <assert.h>
 
 #define PSNR_OUT
@@ -20,7 +21,7 @@ int main(int argc, char **argv) {
 
     CLI::App app{"Runner for the CUDA implementation of the fast bilateral filter using Fourier series"};
 
-    double sigmaSpatial = 8;
+    double sigmaSpatial = 5;
     int spatialKernelSize = static_cast<int>(round(sigmaSpatial * 1.5f) * 2 + 1);
     double sigmaRange = 0.1;
     float T = 2;
@@ -80,10 +81,10 @@ int main(int argc, char **argv) {
     app.add_option("--psnr-kernel-start", startKernelSize, "Start value for the kernel size")->needs(psnrArg);
     app.add_option("--psnr-kernel-end", endKernelSize, "End value for the kernel size")->needs(psnrArg);
 
+    CLI::Option *experimentFlag = app.add_flag("--experiment", "Used for development purposes");
     std::string filename;
 
     app.add_option("file", filename, "Path to the input image");
-
 
     CLI11_PARSE(app, argc, argv);
 
@@ -111,6 +112,12 @@ int main(int argc, char **argv) {
     cv::Mat filterOut(frame.rows, frame.cols, CV_32F);
     assert(filterOut.isContinuous());
 
+    if (experimentFlag->count()) {
+        // evaluate separable filter perf
+        cv::Mat kernel = cv::getGaussianKernel(spatialKernelSize, sigmaSpatial, CV_32F);
+        sepConvEval(frame, filterOut, kernel, 150);
+        return 0;
+    }
     // Check if the program is in evaluation mode for PSNR
     if (psnrArg->count()) {
         std::string kernels[] = {"gaussian", "tukey", "huber", "lorentz"};

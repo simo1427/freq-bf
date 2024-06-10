@@ -17,7 +17,9 @@ add_executable(cuda_bf
 		evaluators/psnrRunner.cpp
 		evaluators/psnrRunner.h
 		evaluators/perfRunner.cpp
-		evaluators/perfRunner.h)
+		evaluators/perfRunner.h
+        evaluators/sepFilterEval.cu
+		evaluators/sepFilterEval.cuh)
 target_include_directories(cuda_bf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_features(cuda_bf PUBLIC cxx_std_20 cuda_std_20)
