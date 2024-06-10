@@ -22,7 +22,6 @@ int main(int argc, char **argv) {
 
     double sigmaSpatial = 8;
     int spatialKernelSize = static_cast<int>(round(sigmaSpatial * 1.5f) * 2 + 1);
-    DEBUG_OUT(spatialKernelSize);
     double sigmaRange = 0.1;
     float T = 2;
     int numberOfCoefficients = 0;
@@ -89,12 +88,14 @@ int main(int argc, char **argv) {
     CLI11_PARSE(app, argc, argv);
 
     rangeKrn = rangeKrnProvider(rangeKrnName);
+    spatialKernelSize = static_cast<int>(round(sigmaSpatial * 1.5f) * 2 + 1);
 
 
     std::cout << "Params: \n";
     DEBUG_OUT(sigmaRange);
     DEBUG_OUT(T);
     DEBUG_OUT(sigmaSpatial);
+    DEBUG_OUT(spatialKernelSize);
 
     cv::Mat frame = cv::imread(filename, cv::IMREAD_GRAYSCALE);
     cv::Mat intFrame = frame.clone();
