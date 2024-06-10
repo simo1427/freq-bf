@@ -23,21 +23,17 @@ __constant__ float2 d_trigLut[MAX_COEFS_NUM][256];
 // TODO: is this an efficient memory layout?
 // shouldn't be a problem, as constant memory should take care of that according to the CUDA C++ Programming Guide
 
-void setCoefficients(float* h_Coefs, int n)
-{
+void setCoefficients(float *h_Coefs, int n) {
     cudaMemcpyToSymbol(d_Coefs, h_Coefs, n);
 }
 
 constexpr double uint8ToFloatScale = 1.0 / 255;
 
-void populateLut(int numberOfCoefficients, float T)
-{
+void populateLut(int numberOfCoefficients, float T) {
     float2 h_trigLut[MAX_COEFS_NUM][256];
-    for (int k = 0; k < numberOfCoefficients; k++)
-    {
+    for (int k = 0; k < numberOfCoefficients; k++) {
         float frequency = 2 * M_PI * k / T;
-        for (int j = 0; j < 256; j++)
-        {
+        for (int j = 0; j < 256; j++) {
             h_trigLut[k][j].x = cos(j * uint8ToFloatScale * frequency);
             h_trigLut[k][j].y = sin(j * uint8ToFloatScale * frequency);
         }
@@ -46,8 +42,8 @@ void populateLut(int numberOfCoefficients, float T)
     cudaMemcpyToSymbol(d_trigLut, h_trigLut, 256 * MAX_COEFS_NUM * sizeof(float2));
 }
 
-__global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int height, int k, size_t srcPitch, size_t bufPitch)
-{
+__global__ void
+fastBFPopulate(uint8_t *d_Inp, float4 *d_Buf, int width, int height, int k, size_t srcPitch, size_t bufPitch) {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -55,7 +51,7 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
         return;
 
     // TODO: shared memory? maybe first pitched memory, then shared...
-    uint8_t* d_InpRow = d_Inp + y * srcPitch;
+    uint8_t *d_InpRow = d_Inp + y * srcPitch;
 
     uint8_t px = d_InpRow[x];
     // TODO: the trick for accessing many uint8_t's at the same time? I saw that recently in an NVIDIA presentation
@@ -67,28 +63,27 @@ __global__ void fastBFPopulate(uint8_t* d_Inp, float4* d_Buf, int width, int hei
     float2 vals = d_trigLut[k][px];
     float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
 
-    float4* d_BufRow = d_Buf + y * bufPitch;
+    float4 *d_BufRow = d_Buf + y * bufPitch;
     d_BufRow[x] = tmp;
 
 }
 
-__global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp,
-                               float4* d_Out, int width, int height,
-                               int k, size_t inpPitch, size_t bufPitch, size_t outPitch)
-{
+__global__ void collectResults(float4 *d_OutNonSummed, uint8_t *d_Inp,
+                               float4 *d_Out, int width, int height,
+                               int k, size_t inpPitch, size_t bufPitch, size_t outPitch) {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 
     if (y >= height || x >= width)
         return;
 
-    uint8_t* d_InpRow = d_Inp + y * inpPitch;
+    uint8_t *d_InpRow = d_Inp + y * inpPitch;
     uint8_t px = d_InpRow[x];
 
-    float4* d_OutNonSummedRow = (float4*)((char*) d_OutNonSummed + y * bufPitch);
+    float4 *d_OutNonSummedRow = (float4 *) ((char *) d_OutNonSummed + y * bufPitch);
     float4 tmp = d_OutNonSummedRow[x];
 
-    float4* d_OutRow = (float4*) ((char*)d_Out + y * outPitch);
+    float4 *d_OutRow = (float4 *) ((char *) d_Out + y * outPitch);
     float4 oldOut = d_OutRow[x];
 
     float4 out;
@@ -107,10 +102,9 @@ __global__ void collectResults(float4* d_OutNonSummed, uint8_t* d_Inp,
     d_OutRow[x] = out;
 }
 
-__global__ void obtainFinalImage(float4* d_OutSummed,
-                               float* d_Out, int width, int height,
-                               size_t inpPitch, size_t outPitch)
-{
+__global__ void obtainFinalImage(float4 *d_OutSummed,
+                                 float *d_Out, int width, int height,
+                                 size_t inpPitch, size_t outPitch) {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -118,10 +112,10 @@ __global__ void obtainFinalImage(float4* d_OutSummed,
         return;
 
 
-    float4* d_OutSummedRow = (float4*) ((char*)d_OutSummed + y * inpPitch);
+    float4 *d_OutSummedRow = (float4 *) ((char *) d_OutSummed + y * inpPitch);
     float4 tmp = d_OutSummedRow[x];
 
-    float* d_OutRow = (float*) ((char*)d_Out + y * outPitch);
+    float *d_OutRow = (float *) ((char *) d_Out + y * outPitch);
     float sum = __fadd_rn(tmp.w, tmp.z);
     float W = __fadd_rn(tmp.x, tmp.y);
     d_OutRow[x] = __fdiv_rn(sum, W);
@@ -131,24 +125,20 @@ __global__ void obtainFinalImage(float4* d_OutSummed,
 //    d_OutRow[x] = lowerBound * upperBound * unclampedVal + lowerBound * 0.0f + upperBound * 1.0f; // attempting some branchless programming
 }
 
-void debugOutBuf(float4* h_BfBuf, int rows, int cols, std::string prefix)
-{
+void debugOutBuf(float4 *h_BfBuf, int rows, int cols, std::string prefix) {
     cv::Mat dbgOut = cv::Mat(rows, cols, CV_32F);
     std::string filenames[] = {"cosImg.tif", "sinImg.tif", "cosIntensityImg.tif", "sinIntensityImg.tif"};
 
-    for (int k = 0; k < 4; k++)
-    {
-        for (int i = 0; i < rows; i++)
-        {
-            float* ptrDbgOut = dbgOut.ptr<float>(i);
+    for (int k = 0; k < 4; k++) {
+        for (int i = 0; i < rows; i++) {
+            float *ptrDbgOut = dbgOut.ptr<float>(i);
 
             union {
                 float4 oneWord;
                 float fourFloats[4];
             } tmp;
 
-            for (int j = 0; j < cols; j++)
-            {
+            for (int j = 0; j < cols; j++) {
                 tmp.oneWord = h_BfBuf[i * cols + j];
                 ptrDbgOut[j] = tmp.fourFloats[k];
             }
@@ -161,8 +151,8 @@ void debugOutBuf(float4* h_BfBuf, int rows, int cols, std::string prefix)
     dbgOut.release();
 }
 
-void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn, int numberOfCoefficients, float T)
-{
+void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn,
+                   int numberOfCoefficients, float T) {
     assert(input.type() == CV_8U);
 
     int width = input.cols;
@@ -170,11 +160,10 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     if (numberOfCoefficients == 0)
         // modified heuristic compared to Honours project
-        numberOfCoefficients =(int)ceil(3 * T / (6 * sigmaRange)) + 1;
+        numberOfCoefficients = (int) ceil(3 * T / (6 * sigmaRange)) + 1;
 
     auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
     std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
-
 
 
 #ifdef DEBUG_PRINT_FOURIER
@@ -198,11 +187,11 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
 
     size_t uint8Pitch, floatPitch, float4PitchInBytes;
 
-    uint8_t* d_Inp;
+    uint8_t *d_Inp;
     checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,
                                     input.cols * sizeof(uint8_t), input.rows));
 
-    float4* d_OutSummed;
+    float4 *d_OutSummed;
     checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
 #ifdef SEPCONV_ACC
@@ -210,17 +199,17 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
 #endif
 
-    float* d_Out;
+    float *d_Out;
     checkCudaErrors(cudaMallocPitch(&d_Out, &floatPitch,
                                     input.cols * sizeof(float), input.rows));
 
-    float4* d_BfBuf;
+    float4 *d_BfBuf;
     checkCudaErrors(cudaMallocPitch(&d_BfBuf, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
-    float4* d_OutNonSummed;
+    float4 *d_OutNonSummed;
     checkCudaErrors(cudaMallocPitch(&d_OutNonSummed, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
-    float4* d_OutNonSummedBuf;
+    float4 *d_OutNonSummedBuf;
     checkCudaErrors(cudaMallocPitch(&d_OutNonSummedBuf, &float4PitchInBytes,
                                     input.cols * sizeof(float4), input.rows));
 
@@ -251,7 +240,7 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
     dim3 finalBlocks = computeNumWorkGroups(finalThreads, width, height);
 
     // for debug image output
-    float4* h_BfBuf = (float4*) malloc(frameSize * sizeof(float4));
+    float4 *h_BfBuf = (float4 *) malloc(frameSize * sizeof(float4));
 
     // TODO: enqueue convolutions for each of the images in memory
 #ifdef MULTI_RUNS
@@ -268,7 +257,8 @@ void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, doub
                                                             width, height,
                                                             i, uint8Pitch, float4Pitch);
 #ifdef SEPCONV_ACC
-        sepFilterAccF4(d_OutSummed, d_BfBuf, d_OutNonSummedBuf, d_Inp, width, height, spatialKernel.rows, i, float4PitchInBytes, uint8Pitch);
+        sepFilterAccF4(d_OutSummed, d_BfBuf, d_OutNonSummedBuf, d_Inp, width, height, spatialKernel.rows, i,
+                       float4PitchInBytes, uint8Pitch);
 #else
         sepFilterf4(d_OutNonSummed,
                     d_BfBuf,
