@@ -73,13 +73,14 @@ void runPerfMeasureFast(cv::Mat image, int numberOfRuns,
 
     std::cout << "Evaluating fast BF\n";
     // Fast BF eval
-    for (int i = 0; i <= numOfVals; i++) {
+    for (int i = 0; i < numOfVals; i++) {
         sigmaRange = startSigmaRange + i * step;
         /*
          * The number of coefficients is subject to tuning, hence it is additionally calculated here
          * and passed to subsequent methods
          */
         int numOfCoefs = numberOfCoefficients == 0 ? (int) ceil(4 * T / (6 * sigmaRange)) + 1 : numberOfCoefficients;
+        std::cout << "Number of coefficients: " << numOfCoefs << "\n";
         for (spatialKernelSize = startKernelSize; spatialKernelSize <= endKernelSize; spatialKernelSize += 2) {
             sigmaSpatial = ((double) spatialKernelSize - 1) / 3.0;// inverse of round(sigmaSpatial * 1.5f) * 2 + 1;
             cv::Mat kernel{cv::getGaussianKernel(spatialKernelSize, sigmaSpatial, CV_32F)};

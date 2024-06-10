@@ -71,7 +71,7 @@ void runPsnrMeasure(cv::Mat image,
     cv::Mat imageF32(image.size[0], image.size[1], CV_32F);
     image.convertTo(imageF32, CV_32F, 1.0 / 255, 0);
 
-    for (int i = 0; i <= endSigmaRange; i++) {
+    for (int i = 0; i < numOfVals; i++) {
         sigmaRange = startSigmaRange + i * step;
         /*
          * The number of coefficients is subject to tuning, hence it is additionally calculated here
