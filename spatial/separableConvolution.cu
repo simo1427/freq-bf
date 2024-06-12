@@ -18,8 +18,8 @@
 #define ACC_VERT_WIDTH 32
 #define ACC_VERT_HEIGHT 16
 
-#define MAX_KS 64
-#define MAX_HKS 32
+#define MAX_KS 1024
+#define MAX_HKS 512
 
 __constant__ float d_Krn[MAX_KS];
 
