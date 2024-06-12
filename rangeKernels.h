@@ -1,10 +1,12 @@
-#ifndef CUDA_BF_RANGEKERNELS_H
-#define CUDA_BF_RANGEKERNELS_H
-
 #include <gsl/gsl_integration.h>
 #include <cmath>
 #include <vector>
 #include <string>
+#include <iostream>
+
+
+#ifndef CUDA_BF_RANGEKERNELS_H
+#define CUDA_BF_RANGEKERNELS_H
 
 #define PROVIDE_KERNEL(KRN_NAME) if(name == #KRN_NAME) return KRN_NAME;
 

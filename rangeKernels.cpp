@@ -1,5 +1,6 @@
 #include "rangeKernels.h"
 
+//#define PARSEVAL_EXPERIMENT
 double
 gaussian(double x, double sigma) {
     double f = exp(-x * x / (2 * sigma * sigma)) / (sigma * SQRT_2_PI);
@@ -54,6 +55,15 @@ fourierCoef(double x, void* params) {
     return f;
 }
 
+double parsevalTerm(double x, void* params) {
+    auto * integrandParams = (integrand_params_t *) params;
+
+    double sigma = (integrandParams->sigma);
+    range_krn_t rangeKrn = (integrandParams->rangeKrn);
+    double tmp = rangeKrn(x, sigma);
+    return tmp * tmp;
+}
+
 range_krn_t
 rangeKrnProvider(std::string& name) {
     PROVIDE_KERNEL(huber)
@@ -72,7 +82,7 @@ std::vector<double> getFourierCoefficients(double sigmaRange, double T, int numb
 
     double result, error;
 
-    double normConst = (T * sigmaRange * SQRT_2_PI);
+    double normConst = (T / 2);
 
     for(int k = 0; k < numberOfCoefficients; k++) {
 
@@ -98,7 +108,38 @@ std::vector<double> getFourierCoefficients(double sigmaRange, double T, int numb
 #endif
 //        std::cout << result << " " << error << "\n";
     }
+
+#ifdef PARSEVAL_EXPERIMENT
+    /*
+     * Experiment with using Parseval's theorem to determine a coefficient count
+     */
+
+    // Getting an approximation for the MSE of the range kernel
+
+    gsl_function fParseval;
+    auto parsevalParams = integrand_params_t {0, sigmaRange, 0, 0, rangeKrn};
+    fParseval.function = parsevalTerm;
+    fParseval.params = &parsevalParams;
+    double parsevalRes;
+    gsl_integration_qags (&fParseval, -T/2, T/2, 1e-7, 1e-7,
+                          GSL_INTEGRATION_WORKSPACE_LIMIT, workspace, &parsevalRes, &error);
+//    parsevalRes /= T;
+    std::cout << "Parseval left side: " << parsevalRes << "; ";
+
+    double coefsSquare = ret[0] * ret[0] / 2;
+    for (int i = 1; i < ret.size(); i++) {
+        double tmpCoef = ret[i];
+        coefsSquare += tmpCoef * tmpCoef;
+    }
+
+    coefsSquare /= T * T;
+    std::cout << "Parseval right side: " << coefsSquare << "; ";
+
+    std::cout << "Difference: " << parsevalRes - coefsSquare << "\n";
+
     gsl_integration_workspace_free(workspace);
+#endif
+
     ret[0] /= 2;
     return ret;
 }
