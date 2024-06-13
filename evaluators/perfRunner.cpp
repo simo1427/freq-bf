@@ -30,8 +30,8 @@ void runPerfMeasureFast(cv::Mat image, int numberOfRuns,
     std::ofstream csvOutCV("./perf-eval/bf-perf-eval-slow.csv");
     std::ofstream csvOutFast("./perf-eval/bf-perf-eval-fast.csv");
     // Create the CSV's header
-    csvOutCV << "sigmaRange, spatialKernelSize, warmup";
-    csvOutFast << "sigmaRange, spatialKernelSize, warmup";
+    csvOutCV << "sigmaRange, numOfCoefs, spatialKernelSize, warmup";
+    csvOutFast << "sigmaRange, numOfCoefs, spatialKernelSize, warmup";
 
     for (int i = 0; i < numberOfRuns; i++) {
         csvOutCV << ",time" << i;
@@ -73,20 +73,21 @@ void runPerfMeasureFast(cv::Mat image, int numberOfRuns,
 
     std::cout << "Evaluating fast BF\n";
     // Fast BF eval
-    for (int i = 0; i < numOfVals; i++) {
-        sigmaRange = startSigmaRange + i * step;
+    for (int i = 1; i <= numOfVals; i++) {
+        sigmaRange = startSigmaRange; //+ i * step;
         /*
          * The number of coefficients is subject to tuning, hence it is additionally calculated here
          * and passed to subsequent methods
          */
-        int numOfCoefs = numberOfCoefficients == 0 ? (int) ceil(4 * T / (6 * sigmaRange)) + 1 : numberOfCoefficients;
+        //int numOfCoefs = numberOfCoefficients == 0 ? (int) ceil(4 * T / (6 * sigmaRange)) + 1 : numberOfCoefficients;
+        int numOfCoefs = i;
         std::cout << "Number of coefficients: " << numOfCoefs << "\n";
         for (spatialKernelSize = startKernelSize; spatialKernelSize <= endKernelSize; spatialKernelSize += 2) {
             sigmaSpatial = ((double) spatialKernelSize - 1) / 3.0;// inverse of round(sigmaSpatial * 1.5f) * 2 + 1;
             cv::Mat kernel{cv::getGaussianKernel(spatialKernelSize, sigmaSpatial, CV_32F)};
-            std::cout << "sigmaRange= " << sigmaRange << " spatialKernelSize= " << spatialKernelSize
+            std::cout << "numOfCoefs= " << numOfCoefs << " spatialKernelSize= " << spatialKernelSize
                       << " "; // << " sigmaRange= " << sigmaSpatial
-            csvOutFast << sigmaRange << "," << spatialKernelSize;
+            csvOutFast << sigmaRange << "," << numOfCoefs << "," << spatialKernelSize;
             // discard the first run
             std::vector<float> runs = BF_approx_gpu_perf(image, fastBF, kernel, sigmaRange, rangeKrn, numOfCoefs, T, numberOfRuns + 1);
 
