@@ -92,7 +92,7 @@ void runPerfMeasureFast(cv::Mat image, int numberOfRuns,
             std::vector<float> runs = BF_approx_gpu_perf(image, fastBF, kernel, sigmaRange, rangeKrn, numOfCoefs, T, numberOfRuns + 1);
 
 
-            for (int run = 0; run < numberOfRuns; run++) {
+            for (int run = 0; run < runs.size(); run++) {
                 // runner for CV BF
                 csvOutFast << "," << runs[run];
             }
