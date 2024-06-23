@@ -119,7 +119,7 @@ __global__ void obtainFinalImage(float4 *d_OutSummed,
     float *d_OutRow = (float *) ((char *) d_Out + y * outPitch);
     float sum = __fadd_rn(tmp.w, tmp.z);
     float W = __fadd_rn(tmp.x, tmp.y);
-    d_OutRow[x] = __fdiv_rn(sum, W);
+    d_OutRow[x] = __saturatef(__fdiv_rn(sum, W)); // __fdiv_rn(sum, W); //
 //    float unclampedVal = __fdiv_rn(sum, W);
 //    int lowerBound = unclampedVal <= 1.0f;
 //    int upperBound = unclampedVal >= 0.0f;
