@@ -3,6 +3,11 @@
 
 void setConvolutionKernel(float* h_Krn, int krnSize);
 
-void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, int krnSize);
+void sepFilter(float* d_Out, float* d_Src, float* d_Buf, int width, int height, int krnSize, size_t pitch);
+
+void sepFilterf4(float4* d_Out, float4* d_Src, float4* d_Buf, int width, int height, int krnSize, size_t pitch);
+
+void sepFilterAccF4(float4* d_Out, float4* d_Src, float4* d_Buf, uint8_t* d_Orig, int width, int height, int krnSize,
+                    int k, size_t pitchInBytes, size_t origPitchInBytes);
 
 #endif //CUDA_BF_SEPARABLECONVOLUTION_CUH

@@ -1,0 +1,560 @@
+//
+// Created by HP on 31/05/2024.
+//
+
+#include "fastBilateral.cuh"
+
+#include "spatial/separableConvolution.cuh"
+#include "utils/cuda_utils.cuh"
+
+#define BF_POPULATE_WIDTH 32
+#define BF_POPULATE_HEIGHT 8
+
+#define BF_COLLECT_WIDTH 32
+#define BF_COLLECT_HEIGHT 8
+
+//#define SEPCONV_COPY_INTERMEDIATE
+
+#define SEPCONV_ACC
+
+#define PRETTYPRINT_PERF_RUNS
+
+__constant__ float d_Coefs[MAX_COEFS_NUM];
+__constant__ float2 d_trigLut[MAX_COEFS_NUM][256];
+// TODO: is this an efficient memory layout?
+// shouldn't be a problem, as constant memory should take care of that according to the CUDA C++ Programming Guide
+
+void setCoefficients(float *h_Coefs, int n) {
+    cudaMemcpyToSymbol(d_Coefs, h_Coefs, n);
+}
+
+constexpr double uint8ToFloatScale = 1.0 / 255;
+
+void populateLut(int numberOfCoefficients, float T) {
+    float2 h_trigLut[MAX_COEFS_NUM][256];
+    for (int k = 0; k < numberOfCoefficients; k++) {
+        float frequency = 2 * M_PI * k / T;
+        for (int j = 0; j < 256; j++) {
+            h_trigLut[k][j].x = cos(j * uint8ToFloatScale * frequency);
+            h_trigLut[k][j].y = sin(j * uint8ToFloatScale * frequency);
+        }
+    }
+
+    cudaMemcpyToSymbol(d_trigLut, h_trigLut, 256 * MAX_COEFS_NUM * sizeof(float2));
+}
+
+__global__ void
+fastBFPopulate(uint8_t *d_Inp, float4 *d_Buf, int width, int height, int k, size_t srcPitch, size_t bufPitch) {
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (y >= height || x >= width)
+        return;
+
+    // TODO: shared memory? maybe first pitched memory, then shared...
+    uint8_t *d_InpRow = d_Inp + y * srcPitch;
+
+    uint8_t px = d_InpRow[x];
+    // TODO: the trick for accessing many uint8_t's at the same time? I saw that recently in an NVIDIA presentation
+
+    float pxScaled = static_cast<float>(px) / 255.0f;
+
+    // order: x:cos y:sin z:cosIntensity w:sinIntensity
+
+    float2 vals = d_trigLut[k][px];
+    float4 tmp = make_float4(vals.x, vals.y, pxScaled * vals.x, pxScaled * vals.y);
+
+    float4 *d_BufRow = d_Buf + y * bufPitch;
+    d_BufRow[x] = tmp;
+
+}
+
+__global__ void collectResults(float4 *d_OutNonSummed, uint8_t *d_Inp,
+                               float4 *d_Out, int width, int height,
+                               int k, size_t inpPitch, size_t bufPitch, size_t outPitch) {
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (y >= height || x >= width)
+        return;
+
+    uint8_t *d_InpRow = d_Inp + y * inpPitch;
+    uint8_t px = d_InpRow[x];
+
+    float4 *d_OutNonSummedRow = (float4 *) ((char *) d_OutNonSummed + y * bufPitch);
+    float4 tmp = d_OutNonSummedRow[x];
+
+    float4 *d_OutRow = (float4 *) ((char *) d_Out + y * outPitch);
+    float4 oldOut = d_OutRow[x];
+
+    float4 out;
+    float2 sinCosVals = d_trigLut[k][px];
+
+    float outX = __fmul_rn(sinCosVals.x, tmp.x);
+    float outY = __fmul_rn(sinCosVals.y, tmp.y);
+    float outZ = __fmul_rn(sinCosVals.x, tmp.z);
+    float outW = __fmul_rn(sinCosVals.y, tmp.w);
+
+    out.x = __fmaf_rn(d_Coefs[k], outX, oldOut.x);
+    out.y = __fmaf_rn(d_Coefs[k], outY, oldOut.y);
+    out.z = __fmaf_rn(d_Coefs[k], outZ, oldOut.z);
+    out.w = __fmaf_rn(d_Coefs[k], outW, oldOut.w);
+
+    d_OutRow[x] = out;
+}
+
+__global__ void obtainFinalImage(float4 *d_OutSummed,
+                                 float *d_Out, int width, int height,
+                                 size_t inpPitch, size_t outPitch) {
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (y >= height || x >= width)
+        return;
+
+
+    float4 *d_OutSummedRow = (float4 *) ((char *) d_OutSummed + y * inpPitch);
+    float4 tmp = d_OutSummedRow[x];
+
+    float *d_OutRow = (float *) ((char *) d_Out + y * outPitch);
+    float sum = __fadd_rn(tmp.w, tmp.z);
+    float W = __fadd_rn(tmp.x, tmp.y);
+    d_OutRow[x] = __saturatef(__fdiv_rn(sum, W)); // __fdiv_rn(sum, W); //
+//    float unclampedVal = __fdiv_rn(sum, W);
+//    int lowerBound = unclampedVal <= 1.0f;
+//    int upperBound = unclampedVal >= 0.0f;
+//    d_OutRow[x] = lowerBound * upperBound * unclampedVal + lowerBound * 0.0f + upperBound * 1.0f; // attempting some branchless programming
+}
+
+void debugOutBuf(float4 *h_BfBuf, int rows, int cols, std::string prefix) {
+    cv::Mat dbgOut = cv::Mat(rows, cols, CV_32F);
+    std::string filenames[] = {"cosImg.tif", "sinImg.tif", "cosIntensityImg.tif", "sinIntensityImg.tif"};
+
+    for (int k = 0; k < 4; k++) {
+        for (int i = 0; i < rows; i++) {
+            float *ptrDbgOut = dbgOut.ptr<float>(i);
+
+            union {
+                float4 oneWord;
+                float fourFloats[4];
+            } tmp;
+
+            for (int j = 0; j < cols; j++) {
+                tmp.oneWord = h_BfBuf[i * cols + j];
+                ptrDbgOut[j] = tmp.fourFloats[k];
+            }
+        }
+
+        cv::imwrite(prefix + filenames[k], dbgOut);
+
+    }
+
+    dbgOut.release();
+}
+
+/**
+ * Executes the GPU kernels for the fast bilateral filter when using separable convolution
+ * @param spatialKernel spatial kernel used for filtering. Must be separable (i.e., N rows X 1 column)
+ * @param numberOfCoefficients the number of coefficients used for approximating the range kernel. The higher the number, the closer the output image will be to the naive algorithm
+ * @param width width of the image (x)
+ * @param height height of the image (y)
+ * @param uint8Pitch width of a row in the uint8_t (pitched memory better for 2D arrays in CUDA) in bytes
+ * @param floatPitch width of a row in the float buffers (pitched memory better for 2D arrays in CUDA) in bytes
+ * @param float4PitchInBytes width of a row in float4 buffers (pitched memory better for 2D arrays in CUDA) in bytes
+ * @param d_Inp pointer to the input image on the device
+ * @param d_OutSummed pointer to the temporary output (before summing and dividing sine/cosine components) on the device
+ * @param d_Out pointer to the output on the device
+ * @param d_BfBuf pointer to the computed cosine, sine, cosine intensity, sine intensity images on the device;
+ * @param d_OutNonSummedBuf buffer for between the first and second passes of the separable convolution
+ * @param float4Pitch width of a row in float4 buffers (pitched memory better for 2D arrays in CUDA) in number of elements
+ * @param populateThreads execution parameters for the kernel populating d_BfBuf
+ * @param populateBlocks execution parameters for the kernel populating d_BfBuf
+ * @param finalThreads execution parameters for the kernel computing the final filter output
+ * @param finalBlocks execution parameters for the kernel computing the final filter output
+ */
+void fastBfGpuSepConv(const cv::Mat &spatialKernel, int numberOfCoefficients, int width, int height, size_t uint8Pitch,
+                      size_t floatPitch, size_t float4PitchInBytes, uint8_t *d_Inp, float4 *d_OutSummed, float *d_Out,
+                      float4 *d_BfBuf, float4 *d_OutNonSummedBuf, size_t float4Pitch, const dim3 &populateThreads,
+                      const dim3 &populateBlocks, const dim3 &finalThreads, const dim3 &finalBlocks) {
+    for (int i = 0; i < numberOfCoefficients; i++) {
+        fastBFPopulate<<<populateBlocks, populateThreads>>>(d_Inp, d_BfBuf,
+                                                            width, height,
+                                                            i, uint8Pitch, float4Pitch);
+#ifdef SEPCONV_ACC
+        sepFilterAccF4(d_OutSummed, d_BfBuf, d_OutNonSummedBuf, d_Inp, width, height, spatialKernel.rows, i,
+                       float4PitchInBytes, uint8Pitch);
+#else
+        sepFilterf4(d_OutNonSummed,
+                    d_BfBuf,
+                    d_OutNonSummedBuf,
+                    width,
+                    height,
+                    spatialKernel.rows,
+                    float4PitchInBytes);
+#endif
+
+
+#ifdef SEPCONV_COPY_INTERMEDIATE
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_BfBuf, float4PitchInBytes,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-unfiltered-{}-", i));
+
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_OutNonSummed, float4PitchInBytes,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-filtered-{}-", i));
+#endif
+
+#ifndef SEPCONV_ACC
+        collectResults<<<finalBlocks, finalThreads>>>(d_OutNonSummed,
+                                                            d_Inp, d_OutSummed,
+                                                            width, height,
+                                                            i, uint8Pitch,
+                                                            float4PitchInBytes, float4PitchInBytes);
+#endif
+
+#ifdef SEPCONV_COPY_INTERMEDIATE
+        checkCudaErrors(cudaMemcpy2D(h_BfBuf, input.cols * sizeof(float4),
+                                     d_OutSummed, float4PitchInBytes,
+                                     input.cols * sizeof(float4), input.rows,
+                                     cudaMemcpyDeviceToHost));
+        debugOutBuf(h_BfBuf, input.rows, input.cols, std::format("gpu-accum-{}-", i));
+#endif
+    }
+
+    obtainFinalImage<<<finalBlocks, finalThreads>>>(d_OutSummed, d_Out, width, height, float4PitchInBytes,
+                                                    floatPitch);
+}
+
+/**
+ * Runs the frequency-based bilateral filter on a CUDA GPU
+ * @param input input image
+ * @param output image to which the output will be written
+ * @param spatialKernel spatial kernel used for filtering. Must be separable (i.e., N rows X 1 column)
+ * @param sigmaRange sigma of the range kernel
+ * @param rangeKrn the range kernel in use
+ * @param numberOfCoefficients the number of coefficients used for approximating the range kernel. The higher the number, the closer the output image will be to the naive algorithm
+ * @param T approximation period. Default value is 2
+ * @param numOfRuns (used for performance evaluation) Number of times to run the frequency-based bilateral filter on the GPU. Default is 1
+ * @return the average duration of the filtering operation + standard deviation
+ */
+std::vector<float>
+BF_approx_gpu_perf(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn,
+                   int numberOfCoefficients, float T, int numOfRuns) {
+    assert(input.type() == CV_8U);
+
+    int width = input.cols;
+    int height = input.rows;
+
+    if (numberOfCoefficients == 0)
+        // modified heuristic compared to Honours project
+        numberOfCoefficients = (int) ceil(3 * T / (6 * sigmaRange)) + 1;
+
+    auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
+    std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
+
+
+#ifdef DEBUG_PRINT_FOURIER
+    std::cout << "Fourier coefs:\n";
+    for (int i = 0; i < coefs.size(); i++)
+    {
+        std::cout << coefs[i] << " ";
+    }
+    std::cout << std::endl;
+#endif
+
+    // Copy the coefficients to constant memory
+    setCoefficients(coefsVec.data(), coefsVec.size() * sizeof(float));
+
+    populateLut(numberOfCoefficients, T);
+    setConvolutionKernel(spatialKernel.ptr<float>(), spatialKernel.rows);
+
+    // Allocate arrays for intermediate images
+
+    int frameSize = input.rows * input.cols;
+
+    size_t uint8Pitch, floatPitch, float4PitchInBytes;
+
+    uint8_t *d_Inp;
+    checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,
+                                    input.cols * sizeof(uint8_t), input.rows));
+
+    float4 *d_OutSummed;
+    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+#ifdef SEPCONV_ACC
+    // zero-initialize
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
+#endif
+
+    float *d_Out;
+    checkCudaErrors(cudaMallocPitch(&d_Out, &floatPitch,
+                                    input.cols * sizeof(float), input.rows));
+
+    float4 *d_BfBuf;
+    checkCudaErrors(cudaMallocPitch(&d_BfBuf, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+    float4 *d_OutNonSummed;
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummed, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+    float4 *d_OutNonSummedBuf;
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummedBuf, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+
+    // copy the image to the GPU
+
+    checkCudaErrors(cudaMemcpy2D(d_Inp, uint8Pitch,
+                                 input.ptr<uint8_t>(), input.cols * sizeof(uint8_t),
+                                 input.cols * sizeof(uint8_t), input.rows,
+                                 cudaMemcpyHostToDevice));
+
+    size_t float4Pitch = float4PitchInBytes / sizeof(float4);
+    // create events for measuring execution time
+    cudaEvent_t start, finish;
+    float elapsedTime;
+
+    // execute kernels
+
+    dim3 populateThreads(BF_POPULATE_WIDTH, BF_POPULATE_HEIGHT);
+    //dim3 populateBlocks(width / populateThreads.x + (width % populateThreads.x ? 1 : 0), height / populateThreads.y + (height % populateThreads.y ? 1 : 0));
+    dim3 populateBlocks = computeNumWorkGroups(populateThreads, width, height);
+
+    dim3 finalThreads(BF_COLLECT_WIDTH, BF_COLLECT_HEIGHT);
+    //dim3 finalBlocks(width / finalThreads.x + (width % finalThreads.x ? 1 : 0), height / finalThreads.y + (height % finalThreads.y ? 1 : 0));
+    dim3 finalBlocks = computeNumWorkGroups(finalThreads, width, height);
+
+    // for debug image output
+    float4 *h_BfBuf = (float4 *) malloc(frameSize * sizeof(float4));
+
+
+    std::vector<float> runs(numOfRuns);
+    for (int run = 0; run < numOfRuns; run++) {
+
+        cudaEventCreate(&start);
+        cudaEventCreate(&finish);
+
+        cudaEventRecord(start, 0);
+
+        // Run the GPU kernels
+        fastBfGpuSepConv(spatialKernel, numberOfCoefficients, width, height, uint8Pitch, floatPitch, float4PitchInBytes, d_Inp,
+          d_OutSummed, d_Out, d_BfBuf, d_OutNonSummedBuf, float4Pitch, populateThreads, populateBlocks, finalThreads,
+          finalBlocks);
+
+        cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
+        cudaEventSynchronize(finish);
+        cudaEventElapsedTime(&elapsedTime, start, finish);
+
+        runs[run] = elapsedTime;
+
+        cudaEventDestroy(start);
+        cudaEventDestroy(finish);
+
+        // reset the accumulator to zeros
+        checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
+
+    }
+
+    // copy result back from the GPU
+
+    checkCudaErrors(cudaMemcpy2D(output.ptr<float>(), input.cols * sizeof(float),
+                                 d_Out, floatPitch,
+                                 input.cols * sizeof(float), input.rows,
+                                 cudaMemcpyDeviceToHost));
+
+
+    free(h_BfBuf);
+
+#ifdef PRETTYPRINT_PERF_RUNS
+    printf("Average of %d runs\n", numOfRuns);
+    double totalElapsedTime = 0;
+    for (int run = 0; run < numOfRuns; run++) {
+        totalElapsedTime += runs[run];
+        printf("%d: %f ms\n", run + 1, runs[run]);
+    }
+    totalElapsedTime /= numOfRuns; // [in milliseconds]
+
+    double standardDev = 0;
+    if (numOfRuns == 1) {
+        standardDev = NAN;
+        printf("Average elapsed time: %f ms\n", totalElapsedTime);
+    } else {
+        for (int run = 0; run < numOfRuns; run++) {
+            double diff = runs[run] - totalElapsedTime;
+            standardDev += diff * diff;
+        }
+        standardDev = sqrt(standardDev / numOfRuns);
+        printf("Average elapsed time: %f ms +/- %f ms\n", totalElapsedTime, standardDev);
+    }
+
+    double elapsedTimeSec = totalElapsedTime * 1e-3; // [in seconds]
+
+
+    printf("Throughput: %f MP/s\n", width * height / (elapsedTimeSec * 1e6));
+#endif
+    // divide by 1e6 to get MPx, additionally by 1e3 to get the ms to s
+
+    // cleanup
+    cudaFree(d_Inp);
+    cudaFree(d_OutSummed);
+    cudaFree(d_OutNonSummed);
+    cudaFree(d_BfBuf);
+    cudaFree(d_OutNonSummedBuf);
+    cudaFree(d_Out);
+
+    return runs;
+}
+
+/**
+ * Runs the frequency-based bilateral filter on a CUDA GPU
+ * @param input input image
+ * @param output image to which the output will be written
+ * @param spatialKernel spatial kernel used for filtering. Must be separable (i.e., N rows X 1 column)
+ * @param sigmaRange sigma of the range kernel
+ * @param rangeKrn the range kernel in use
+ * @param numberOfCoefficients the number of coefficients used for approximating the range kernel. The higher the number, the closer the output image will be to the naive algorithm
+ * @param T approximation period. Default value is 2
+ * @param numOfRuns (used for performance evaluation) Number of times to run the frequency-based bilateral filter on the GPU. Default is 1
+ * @return
+ */
+void BF_approx_gpu(cv::Mat &input, cv::Mat &output, cv::Mat &spatialKernel, double sigmaRange, range_krn_t rangeKrn,
+                   int numberOfCoefficients, float T) {
+    assert(input.type() == CV_8U);
+
+    int width = input.cols;
+    int height = input.rows;
+
+    if (numberOfCoefficients == 0)
+        // modified heuristic compared to Honours project
+        numberOfCoefficients = (int) ceil(3 * T / (6 * sigmaRange)) + 1;
+
+    auto doubleCoefs = getFourierCoefficients(sigmaRange, T, numberOfCoefficients, rangeKrn);
+    std::vector<float> coefsVec{doubleCoefs.begin(), doubleCoefs.end()};
+
+
+#ifdef DEBUG_PRINT_FOURIER
+    std::cout << "Fourier coefs:\n";
+    for (int i = 0; i < coefs.size(); i++)
+    {
+        std::cout << coefs[i] << " ";
+    }
+    std::cout << std::endl;
+#endif
+
+    // Copy the coefficients to constant memory
+    setCoefficients(coefsVec.data(), coefsVec.size() * sizeof(float));
+
+    populateLut(numberOfCoefficients, T);
+    setConvolutionKernel(spatialKernel.ptr<float>(), spatialKernel.rows);
+
+    // Allocate arrays for intermediate images
+
+    int frameSize = input.rows * input.cols;
+
+    size_t uint8Pitch, floatPitch, float4PitchInBytes;
+
+    uint8_t *d_Inp;
+    checkCudaErrors(cudaMallocPitch(&d_Inp, &uint8Pitch,
+                                    input.cols * sizeof(uint8_t), input.rows));
+
+    float4 *d_OutSummed;
+    checkCudaErrors(cudaMallocPitch(&d_OutSummed, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+#ifdef SEPCONV_ACC
+    // zero-initialize
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
+#endif
+
+    float *d_Out;
+    checkCudaErrors(cudaMallocPitch(&d_Out, &floatPitch,
+                                    input.cols * sizeof(float), input.rows));
+
+    float4 *d_BfBuf;
+    checkCudaErrors(cudaMallocPitch(&d_BfBuf, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+    float4 *d_OutNonSummed;
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummed, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+    float4 *d_OutNonSummedBuf;
+    checkCudaErrors(cudaMallocPitch(&d_OutNonSummedBuf, &float4PitchInBytes,
+                                    input.cols * sizeof(float4), input.rows));
+
+    // copy the image to the GPU
+
+    checkCudaErrors(cudaMemcpy2D(d_Inp, uint8Pitch,
+                                 input.ptr<uint8_t>(), input.cols * sizeof(uint8_t),
+                                 input.cols * sizeof(uint8_t), input.rows,
+                                 cudaMemcpyHostToDevice));
+
+    size_t float4Pitch = float4PitchInBytes / sizeof(float4);
+    // create events for measuring execution time
+    cudaEvent_t start, finish;
+    float elapsedTime;
+
+    // execute kernels
+
+    dim3 populateThreads(BF_POPULATE_WIDTH, BF_POPULATE_HEIGHT);
+    //dim3 populateBlocks(width / populateThreads.x + (width % populateThreads.x ? 1 : 0), height / populateThreads.y + (height % populateThreads.y ? 1 : 0));
+    dim3 populateBlocks = computeNumWorkGroups(populateThreads, width, height);
+
+    dim3 finalThreads(BF_COLLECT_WIDTH, BF_COLLECT_HEIGHT);
+    //dim3 finalBlocks(width / finalThreads.x + (width % finalThreads.x ? 1 : 0), height / finalThreads.y + (height % finalThreads.y ? 1 : 0));
+    dim3 finalBlocks = computeNumWorkGroups(finalThreads, width, height);
+
+    // for debug image output
+    float4 *h_BfBuf = (float4 *) malloc(frameSize * sizeof(float4));
+
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&finish);
+
+    cudaEventRecord(start, 0);
+
+    // Run the GPU kernels
+    fastBfGpuSepConv(spatialKernel, numberOfCoefficients, width, height, uint8Pitch, floatPitch, float4PitchInBytes, d_Inp,
+                     d_OutSummed, d_Out, d_BfBuf, d_OutNonSummedBuf, float4Pitch, populateThreads, populateBlocks, finalThreads,
+                     finalBlocks);
+
+    cudaEventRecord(finish, 0); // Beware of streams if they are going to be added later!
+    cudaEventSynchronize(finish);
+    cudaEventElapsedTime(&elapsedTime, start, finish);
+
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(finish);
+
+    // reset the accumulator to zeros
+    checkCudaErrors(cudaMemset2D(d_OutSummed, float4PitchInBytes, 0.0f, input.cols * sizeof(float4), input.rows));
+
+
+    // copy result back from the GPU
+
+    checkCudaErrors(cudaMemcpy2D(output.ptr<float>(), input.cols * sizeof(float),
+                                 d_Out, floatPitch,
+                                 input.cols * sizeof(float), input.rows,
+                                 cudaMemcpyDeviceToHost));
+
+
+    free(h_BfBuf);
+
+
+    printf("Elapsed time: %f ms\n", elapsedTime);
+    double elapsedTimeSec = elapsedTime * 1e-3; // [in seconds]
+
+
+    printf("Throughput: %f MP/s\n", width * height / (elapsedTimeSec * 1e6));
+
+    // divide by 1e6 to get MPx, additionally by 1e3 to get the ms to s
+
+    // cleanup
+    cudaFree(d_Inp);
+    cudaFree(d_OutSummed);
+    cudaFree(d_OutNonSummed);
+    cudaFree(d_BfBuf);
+    cudaFree(d_OutNonSummedBuf);
+    cudaFree(d_Out);
+
+    return;
+}
