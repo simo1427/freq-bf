@@ -22,7 +22,7 @@ The project uses command-line flags, use `--help` to obtain a summary
 
 ```
 Runner for the CUDA implementation of the fast bilateral filter using Fourier series
-Usage: D:\University\Year 3\cse3000\cuda-bf\cmake-build-release\cuda_bf.exe [OPTIONS] [file]
+Usage: .\cuda_bf.exe [OPTIONS] [file]
 
 Positionals:
   file TEXT                   Path to the input image
